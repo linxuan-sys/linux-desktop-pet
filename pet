@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# pet — start/stop the three Linux desktop pets.
+set -u
+
+ROOT="${PET_ROOT:-$HOME/.local/opt/linux-desktop-pet}"
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/pet"
+
+usage() {
+    echo "用法: pet {claude|codex|dsh}"
+    echo "  已启动时再次执行会关闭对应桌宠"
+}
+
+case "${1:-}" in
+    claude) name="claude-girl" ;;
+    codex)  name="codex-girl"  ;;
+    dsh)    name="dsh-girl"    ;;
+    *) usage; exit 2 ;;
+esac
+
+bin="$ROOT/$name/target/release/$name"
+
+if pgrep -x "$name" >/dev/null 2>&1; then
+    pkill -TERM -x "$name"
+    for _ in {1..20}; do
+        pgrep -x "$name" >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    if pgrep -x "$name" >/dev/null 2>&1; then
+        pkill -KILL -x "$name"
+    fi
+    if pgrep -x "$name" >/dev/null 2>&1; then
+        echo "$name 关闭失败" >&2
+        exit 1
+    fi
+    echo "$name 已关闭"
+    exit 0
+fi
+
+if [[ ! -x "$bin" ]]; then
+    echo "找不到可执行文件: $bin" >&2
+    echo "先编译: cargo build --release --manifest-path \"$ROOT/$name/Cargo.toml\"" >&2
+    exit 1
+fi
+
+mkdir -p "$STATE"
+log="$STATE/$name.log"
+setsid -f "$bin" >"$log" 2>&1 </dev/null
+sleep 0.3
+if pgrep -x "$name" >/dev/null 2>&1; then
+    echo "$name 已启动"
+else
+    echo "$name 启动失败，日志: $log" >&2
+    tail -n 10 "$log" >&2
+    exit 1
+fi

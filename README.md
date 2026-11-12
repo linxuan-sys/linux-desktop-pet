@@ -2,6 +2,11 @@
   <img src="docs/poster.png" alt="Rust Desktop Pet Trio — Claude Girl, DSH Girl and Codex Girl on Linux" width="100%">
 </div>
 
+<div align="center">
+  <video src="docs/2026-11-12-223118-REGION.mp4" controls playsinline preload="metadata" width="100%"></video>
+  <p><a href="docs/2026-11-12-223118-REGION.mp4">▶ Watch the demo · 观看演示</a></p>
+</div>
+
 <h1 align="center">Rust Desktop Pet Trio</h1>
 
 <p align="center">
@@ -139,9 +144,59 @@ pkill -x 'codex-girl|claude-girl|dsh-girl'
 
 Three pets on one screen may overlap. That is expected; they are independent windows.
 
-### Install (optional)
+### Deploy the launcher (recommended)
 
-Install one pet into your user prefix:
+Keep the whole repository at:
+
+```text
+~/.local/opt/linux-desktop-pet
+```
+
+Install the single-file launcher to:
+
+```text
+~/.local/bin/pet
+```
+
+From an existing checkout, install the launcher with one command:
+
+```bash
+install -Dm755 pet ~/.local/bin/pet
+```
+
+For a fresh clone, this one-liner creates both directories, clones the repository, and installs the launcher (replace `YOUR_REPO_URL`):
+
+```bash
+mkdir -p ~/.local/opt ~/.local/bin && git clone YOUR_REPO_URL ~/.local/opt/linux-desktop-pet && install -Dm755 ~/.local/opt/linux-desktop-pet/pet ~/.local/bin/pet
+```
+
+The `pet` file in the repository is the source copy. Edit that one and reinstall it; do not edit `~/.local/bin/pet` directly.
+
+Build the three binaries once (these commands work in fish and bash), then start or stop each pet by name:
+
+```bash
+cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/claude-girl/Cargo.toml"
+cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/dsh-girl/Cargo.toml"
+cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/codex-girl/Cargo.toml"
+```
+
+```bash
+pet claude
+pet codex
+pet dsh
+```
+
+Running the same command again closes that pet. The launcher expects the repository at `~/.local/opt/linux-desktop-pet`; if you keep it elsewhere, set `PET_ROOT`:
+
+```bash
+PET_ROOT=/path/to/linux-desktop-pet pet claude
+```
+
+Startup errors are written to `~/.local/state/pet/<name>.log`.
+
+### Install a standalone binary (optional)
+
+Skip this section if you use the `pet` launcher above. Install one pet into your user prefix:
 
 ```bash
 pet=claude-girl
@@ -266,6 +321,8 @@ To add a random animation, put a new WebP in `media/anim/` and add its filename 
 linux-desktop-pet/
 ├── README.md                 this document
 ├── LICENSE                   MIT license for the code
+├── .gitignore                build artifacts and legacy configs
+├── pet                       one-file start/stop launcher
 ├── docs/
 │   └── poster.png            trio poster (4:3)
 ├── claude-girl/
@@ -433,9 +490,59 @@ pkill -x 'codex-girl|claude-girl|dsh-girl'
 
 三只同屏可能会重叠，这是正常的，它们是彼此独立的窗口。
 
-### 安装（可选）
+### 部署启动脚本（推荐）
 
-把一只桌宠装进用户目录：
+整个仓库放在：
+
+```text
+~/.local/opt/linux-desktop-pet
+```
+
+单文件启动脚本安装到：
+
+```text
+~/.local/bin/pet
+```
+
+如果仓库已经在本地，用一条命令安装启动脚本：
+
+```bash
+install -Dm755 pet ~/.local/bin/pet
+```
+
+全新克隆时，用下面这一条同时创建目录、克隆仓库并安装脚本（把 `YOUR_REPO_URL` 换成你的仓库地址）：
+
+```bash
+mkdir -p ~/.local/opt ~/.local/bin && git clone YOUR_REPO_URL ~/.local/opt/linux-desktop-pet && install -Dm755 ~/.local/opt/linux-desktop-pet/pet ~/.local/bin/pet
+```
+
+仓库里的 `pet` 是源文件，以后改脚本改这一份，再重新 `install` 覆盖；不要直接改 `~/.local/bin/pet`。
+
+先编译三只（下面三条命令 fish 和 bash 都能直接用），之后就可以按名字启动或关闭：
+
+```bash
+cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/claude-girl/Cargo.toml"
+cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/dsh-girl/Cargo.toml"
+cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/codex-girl/Cargo.toml"
+```
+
+```bash
+pet claude
+pet codex
+pet dsh
+```
+
+同一个命令再执行一次就是关闭对应桌宠。脚本默认项目在 `~/.local/opt/linux-desktop-pet`；如果放在别处，用 `PET_ROOT` 指定：
+
+```bash
+PET_ROOT=/path/to/linux-desktop-pet pet claude
+```
+
+启动失败的日志在 `~/.local/state/pet/<name>.log`。
+
+### 安装单只二进制（可选）
+
+如果你使用上面的 `pet` 启动脚本，可以跳过这一节。把一只桌宠装进用户目录：
 
 ```bash
 pet=claude-girl
@@ -560,6 +667,8 @@ Codex Girl 使用同一组状态，但素材名是：`待机`、`开心`、`跳�
 linux-desktop-pet/
 ├── README.md                 本文档
 ├── LICENSE                   代码的 MIT 许可证
+├── .gitignore                忽略编译产物和旧配置
+├── pet                       一个文件控制三只的启停脚本
 ├── docs/
 │   └── poster.png            三只同框海报（4:3）
 ├── claude-girl/
