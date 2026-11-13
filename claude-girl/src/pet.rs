@@ -93,6 +93,9 @@ fn roll_random() -> &'static str {
             .filter(|a| !SPECIAL.contains(a))
             .collect()
     });
+    if pool.is_empty() {
+        return "idle";
+    }
     pool[nanos() as usize % pool.len()]
 }
 
