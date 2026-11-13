@@ -127,11 +127,11 @@ The `dsh-girl` and `codex-girl` sections live in the same file. Missing keys fal
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `poll.systemState` | `2500` | Sensor poll interval, in milliseconds. |
-| `poll.cursor` | `33` | Render tick, in milliseconds. |
 | `click.left` | `""` | Left-click command. Empty means no command; the click still plays the happy reaction. |
 | `click.middle` | `kitty` | Middle-click command. |
 | `click.right` | `kitty dsh-tui` | Right-click command. |
+
+Polling intervals are fixed in the binary: system state every 2.5 s, render tick every 33 ms.
 
 Commands are split on whitespace and spawned directly, without a shell. If you need pipes or quoting, point the config at a small wrapper script. Click commands are debounced for 1200 ms, so a burst of clicks cannot open a terminal swarm. The file is read at startup; restart the pet after editing.
 
@@ -145,7 +145,7 @@ clipboard ────────► reaction ──────┘
 
 - **Sensors.** A background thread polls system state every 2.5 seconds: focused window, CLI process count, MPRIS playback, battery, hour. A compositor-specific thread streams focus events into a shared cache.
 - **Pet engine.** The state machine locks each pose for a full 10-second clip. Reactions (happy, charging, copy) can interrupt on click or wait for the current clip to finish. The awake routine is seven steps: idle, idle, random, idle, idle, random, walk.
-- **Walking.** A walk is one 10-second clip; the window travels 180 logical pixels during the 1.5–4.5 s run window. The direction cycle is two left runs, then two right runs; a wall shorter than half a stride flips the direction instead of running in place.
+- **Walking.** A walk is one 10-second clip; the window travels 180 logical pixels during the 1.5–4.5 s run window. The direction cycle is two left runs, then two right runs; at a screen edge the window stops and the clip keeps running in place.
 - **Renderer.** `Sheet` loads a WebP sprite sheet lazily, keeps a small LRU cache, and blits one 640×360 frame into the shared-memory buffer. The layer surface is transparent; the input region is built from opaque pixels, so clicks only land on the pet.
 
 ### Animation format
@@ -324,11 +324,11 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
-| `poll.systemState` | `2500` | 传感器轮询间隔，毫秒。 |
-| `poll.cursor` | `33` | 渲染节拍，毫秒。 |
 | `click.left` | `""` | 左键命令。空字符串表示不启动程序，但仍然播放点击开心反应。 |
 | `click.middle` | `kitty` | 中键命令。 |
 | `click.right` | `kitty dsh-tui` | 右键命令。 |
+
+轮询间隔固定在程序里：系统状态每 2.5 秒、渲染节拍每 33 毫秒。
 
 命令按空白拆分后直接启动，不经过 shell。如果需要管道或引号，请把配置指向一个小包装脚本。点击命令有 1200 毫秒防抖，连续点击不会开出一堆终端。配置在启动时读取，改完要重启桌宠。
 
@@ -342,7 +342,7 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 
 - **传感器。** 后台线程每 2.5 秒采集一次：焦点窗口、CLI 进程数、MPRIS 播放状态、电量、小时。合成器专用线程把焦点事件写入共享缓存。
 - **宠物引擎。** 每个姿势锁定一整段 10 秒动画；点击可以立刻打断，充电/复制等反应则等当前片段播完。清醒时的日程是七步：发呆、发呆、随机、发呆、发呆、随机、走路。
-- **走路。** 一次走路就是一段 10 秒动画；窗口在 1.5–4.5 秒的奔跑窗口内移动 180 逻辑像素。方向循环是两次左跑、两次右跑；如果离墙不足半个步幅，就自动换方向，而不是原地跑。
+- **走路。** 一次走路就是一段 10 秒动画；窗口在 1.5–4.5 秒的奔跑窗口内移动 180 逻辑像素。方向循环是两次左跑、两次右跑；碰到屏幕边缘会停住窗口，动画继续原地踏步。
 - **渲染器。** `Sheet` 按需加载 WebP 精灵图，维护一个小型 LRU 缓存，把一帧 640×360 画进共享内存缓冲区。覆盖层透明，输入区域由不透明像素生成，所以只有点到宠物身上才会响应。
 
 ### 动画格式

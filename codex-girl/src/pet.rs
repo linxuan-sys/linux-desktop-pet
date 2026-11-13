@@ -19,10 +19,6 @@ const WALK_START_MS: u64 = 3_000;
 const WALK_MOVE_MS: u64 = 2_500;
 /// Window travel speed while the run is on.
 const WALK_PX_PER_SEC: i32 = 60;
-/// A walk shorter than half a stride reads as running in place; try the
-/// other direction instead.
-const MIN_WALK_PX: i32 = WALK_PX_PER_SEC * WALK_MOVE_MS as i32 / 1000 / 2;
-
 /// Cheap cosmetic randomness (no rand crate).
 fn nanos() -> u32 {
     std::time::SystemTime::now()
@@ -313,28 +309,22 @@ impl Pet {
     }
 
     /// One 10s clip walking left or right: the window moves only during the
-    /// 3s..5.5s run window. If the chosen side is less than half a stride
-    /// away, try the other direction; return None when both sides are blocked.
-    fn begin_walk(&mut self, now: u64, right: bool) -> Option<&'static str> {
+    /// run window. The target is clamped to the screen, so at a wall the
+    /// window stays put and the clip runs in place.
+    fn begin_walk(&mut self, now: u64, right: bool) -> &'static str {
         let dist = WALK_PX_PER_SEC * WALK_MOVE_MS as i32 / 1000;
-        for dir in [right, !right] {
-            let target = if dir {
-                (self.pos_x + dist).min(self.max_x.max(self.pos_x))
-            } else {
-                (self.pos_x - dist).max(0).min(self.pos_x)
-            };
-            if (target - self.pos_x).abs() < MIN_WALK_PX {
-                continue;
-            }
-            self.walk = Some(Walk {
-                start: now,
-                x0: self.pos_x,
-                target,
-                right: dir,
-            });
-            return Some(if dir { "walk-right" } else { "walk-left" });
-        }
-        None
+        let target = if right {
+            (self.pos_x + dist).min(self.max_x.max(self.pos_x))
+        } else {
+            (self.pos_x - dist).max(0)
+        };
+        self.walk = Some(Walk {
+            start: now,
+            x0: self.pos_x,
+            target,
+            right,
+        });
+        if right { "walk-right" } else { "walk-left" }
     }
 
     pub fn tick(&mut self, now: u64) -> Option<&'static str> {
@@ -443,11 +433,11 @@ impl Pet {
         }
         match STEPS[self.step_index] {
             Step::Walk => {
-                // two left runs, then two right runs; near a wall the pet
-                // takes the other direction instead of running in place
+                // two left runs, then two right runs; at a wall the window
+                // stays put and the clip runs in place
                 let right = self.walk_phase >= 2;
                 self.walk_phase = (self.walk_phase + 1) % 4;
-                self.begin_walk(now, right).unwrap_or("idle")
+                self.begin_walk(now, right)
             }
             Step::Random => {
                 self.random_anim = roll_random();

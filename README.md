@@ -61,9 +61,9 @@ The three projects share the same engine and the same pose vocabulary, but each 
 - **AI-coding awareness.** Focus detection through niri IPC or the Hyprland socket, plus `/proc` scanning for `claude`, `opencode`, and `codex`. When you focus an AI CLI, the pet switches to work mode.
 - **A small daily routine.** Work mode types along and takes music breaks; awake mode idles, looks around, picks a random animation, and walks; rest mode gets drowsy and falls asleep.
 - **Small reactions.** Happy hop on click, celebration when the charger is plugged in, low-battery reminder, late-night yawn, dance when MPRIS reports music, quiet "copy" animation when the clipboard changes.
-- **Walking with wall awareness.** The window moves only during the run window of the clip. Direction cycles two left runs, then two right runs; if the wall is closer than half a stride, the pet flips direction instead of running in place.
+- **Walking.** The window moves only during the run window of the clip. Direction cycles two left runs, then two right runs; at a screen edge the window stops and the clip keeps running in place.
 - **Readable architecture.** Pet engine, Wayland host and sensors are separate modules. No framework, no runtime, no magic.
-- **Configuration and click commands.** A small JSON file controls polling, terminal commands, and click actions; commands are split on whitespace and spawned directly, with a 1200 ms click debounce.
+- **Configuration and click commands.** A small JSON file maps each mouse button to a terminal command; commands are split on whitespace and spawned directly, with a 1200 ms click debounce.
 
 ### Requirements
 
@@ -243,11 +243,10 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 # usually ~/.config/desktop-pet/desktop-pet.json
 ```
 
-The file has shared polling settings and one `click` block per pet:
+The file has one `click` block per pet:
 
 ```json
 {
-  "poll": { "systemState": 2500, "cursor": 33 },
   "pets": {
     "claude-girl": {
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
@@ -266,11 +265,11 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `poll.systemState` | `2500` | Sensor poll interval, in milliseconds. |
-| `poll.cursor` | `33` | Render tick, in milliseconds. |
 | `click.left` | `""` | Left-click command. Empty means no command; the click still plays the happy reaction. |
 | `click.middle` | `kitty` | Middle-click command. |
 | `click.right` | per pet | `kitty claude` for Claude Girl, `kitty dsh-tui` for DSH Girl, `kitty codex` for Codex Girl. |
+
+Polling intervals are fixed in the binary: system state every 2.5 s, render tick every 33 ms.
 
 Commands are split on whitespace and spawned directly, without a shell. If you need pipes or quoting, point the config at a small wrapper script. Click commands are debounced for 1200 ms, so a burst of clicks cannot open a terminal swarm. The file is read at startup; restart the pet after editing.
 
@@ -284,7 +283,7 @@ clipboard ────────► reaction ──────┘
 
 - **Sensors.** A background thread polls focused window, CLI process count, MPRIS playback, battery and hour every 2.5 seconds. A compositor-specific thread streams focus events into a shared cache.
 - **Pet engine.** Each pose is locked for a complete 10-second clip. A click interrupts immediately; charging, copy and other reactions wait for the current clip to finish. The awake routine is seven steps: idle, idle, random, idle, idle, random, walk.
-- **Walking.** The window is stationary before and after the run window, interpolates its position during the run, clamps at the screen edges, and flips direction when the remaining distance is shorter than half a stride.
+- **Walking.** The window is stationary before and after the run window, interpolates its position during the run, and clamps at the screen edges; at an edge the window stops and the clip runs in place.
 - **Renderer.** `Sheet` loads WebP sprite sheets lazily, keeps a small LRU cache, pins the click-happy sheet, and blits one 640×360 frame into the shared-memory buffer. The layer surface stays transparent; the input region follows the visible pixels.
 
 ### Animation format
@@ -407,9 +406,9 @@ The source code in this repository is released under the **MIT License** — see
 - **感知 AI 编程状态。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口，通过 `/proc` 识别 `claude`、`opencode`、`codex`。聚焦 AI CLI 时自动进入工作模式。
 - **自己的小日常。** 工作模式陪你敲代码、间歇听音乐；清醒模式发呆、东张西望、随机做动作、起身散步；休息模式先犯困再睡着。
 - **小小的反应。** 点击开心跳、插电源庆祝、低电量提醒、深夜打哈欠、MPRIS 有音乐时跳舞、剪贴板变化时安静“记录”。
-- **会看墙的走路。** 只在动画的奔跑窗口移动；方向循环是两次左跑、两次右跑；离墙不足半个步幅时自动换方向，不会贴着墙原地跑。
+- **走路。** 只在动画的奔跑窗口移动；方向循环是两次左跑、两次右跑；碰到屏幕边缘会 clamp，窗口停住但动画继续原地踏步。
 - **可读的架构。** 宠物引擎、Wayland 宿主、传感器各自独立；没有框架、没有运行时、没有魔法。
-- **配置与点击命令。** 一个 JSON 控制轮询、终端命令和点击动作；命令按空白拆分后直接启动，点击有 1200 毫秒防抖。
+- **配置与点击命令。** 一个 JSON 把每个鼠标键映射到终端命令；命令按空白拆分后直接启动，点击有 1200 毫秒防抖。
 
 ### 环境要求
 
@@ -589,11 +588,10 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 # 通常是 ~/.config/desktop-pet/desktop-pet.json
 ```
 
-文件里有一段共享的轮询设置，以及每只自己的 `click` 段：
+文件里每只桌宠有一段自己的 `click`：
 
 ```json
 {
-  "poll": { "systemState": 2500, "cursor": 33 },
   "pets": {
     "claude-girl": {
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
@@ -612,11 +610,11 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
-| `poll.systemState` | `2500` | 传感器轮询间隔，毫秒。 |
-| `poll.cursor` | `33` | 渲染节拍，毫秒。 |
 | `click.left` | `""` | 左键命令。空字符串表示不启动程序，但仍然播放点击开心反应。 |
 | `click.middle` | `kitty` | 中键命令。 |
 | `click.right` | 按桌宠 | Claude Girl 是 `kitty claude`，DSH Girl 是 `kitty dsh-tui`，Codex Girl 是 `kitty codex`。 |
+
+轮询间隔固定在程序里：系统状态每 2.5 秒、渲染节拍每 33 毫秒。
 
 命令按空白拆分后直接启动，不经过 shell。如果需要管道或引号，请把配置指向一个小包装脚本。点击命令有 1200 毫秒防抖，连续点击不会开出一堆终端。配置在启动时读取，改完要重启桌宠。
 
@@ -630,7 +628,7 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 
 - **传感器。** 后台线程每 2.5 秒轮询焦点窗口、CLI 进程数量、MPRIS 播放状态、电池和小时。合成器专用线程把焦点事件写入共享缓存。
 - **宠物引擎。** 每个姿势锁定一整段 10 秒动画。点击可以立刻打断；充电、复制等反应会等当前片段播完。清醒时的日程是七步：发呆、发呆、随机、发呆、发呆、随机、走路。
-- **走路。** 奔跑窗口之前和之后窗口保持不动，窗口期间插值移动，碰到屏幕边缘会 clamp；剩余距离不足半个步幅时自动换方向。
+- **走路。** 奔跑窗口之前和之后窗口保持不动，窗口期间插值移动，碰到屏幕边缘会 clamp；贴边时窗口停住，动画继续原地踏步。
 - **渲染器。** `Sheet` 按需加载 WebP 精灵图，维护一个小型 LRU 缓存，并固定点击开心素材，避免点击时等待加载。每帧把一张 640×360 的画面 blit 到共享内存缓冲区；layer 表面保持透明，输入区域跟随可见像素。
 
 ### 动画格式

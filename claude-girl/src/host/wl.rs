@@ -166,8 +166,7 @@ impl WlHost {
             (),
         );
         // bottom-right perch; -1 = overlap other layer surfaces, lets the
-        // pet cross taskbars; None keyboard = never steals focus (chords
-        // arrive via side channels instead)
+        // pet cross taskbars; None keyboard = never steals focus
         layer_surface.set_anchor(Anchor::Bottom | Anchor::Right);
         // provisional until the compositor reports its fractional scale
         layer_surface.set_size(WINDOW_W, WINDOW_H);

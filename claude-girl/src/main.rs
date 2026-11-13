@@ -17,6 +17,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+const SYSTEM_POLL_MS: u64 = 2_500;
+const TICK_MS: u64 = 33;
+
 /// First candidate dir that contains the animation library.
 fn find_media_dir(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates.iter().find(|d| d.join("anim").is_dir()).cloned()
@@ -65,17 +68,17 @@ fn main() {
     // pin the click reaction now so the first click does not decode
     let _ = sheet.frame_at("happy", 0, false);
     let (tx, rx) = channel::<Signal>();
-    spawn_sensor_threads(&tx, &cfg);
+    spawn_sensor_threads(&tx);
     if let Err(e) = run(cfg, &mut sheet, rx) {
         eprintln!("claude-girl: host failed: {e}");
         std::process::exit(1);
     }
 }
 
-fn spawn_sensor_threads(tx: &Sender<Signal>, cfg: &Config) {
-    // system state + focus event stream (upstream cadences)
+fn spawn_sensor_threads(tx: &Sender<Signal>) {
+    // system state + focus event stream (2.5s cadence)
     let tx_state = tx.clone();
-    let system_ms = Duration::from_millis(cfg.raw["poll"]["systemState"].as_u64().unwrap_or(2500));
+    let system_ms = Duration::from_millis(SYSTEM_POLL_MS);
     std::thread::spawn(move || {
         let cache = sensors::focus::new_cache();
         let c2 = cache.clone();
@@ -112,7 +115,6 @@ fn run(cfg: Config, sheet: &mut Sheet, rx: Receiver<Signal>) -> Result<(), Strin
     let (fw, fh) = host.size();
 
     let start = Instant::now();
-    let frame_ms = Duration::from_millis(cfg.raw["poll"]["cursor"].as_u64().unwrap_or(33));
     // clicks that spawn something debounce each other; a click burst must
     // not open a terminal swarm
     let mut last_spawn_ms: u64 = 0;
@@ -193,7 +195,7 @@ fn run(cfg: Config, sheet: &mut Sheet, rx: Receiver<Signal>) -> Result<(), Strin
             }
         }
 
-        std::thread::sleep(frame_ms);
+        std::thread::sleep(Duration::from_millis(TICK_MS));
     }
 }
 

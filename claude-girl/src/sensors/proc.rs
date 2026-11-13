@@ -25,9 +25,8 @@ pub fn count_paths(dir: &str, comm: &str) -> usize {
     count
 }
 
-/// The pet's config view: the shared JSON plus the three click commands.
+/// The pet's click commands.
 pub struct Config {
-    pub raw: Value,
     /// Command run by a stationary click, per button: [left, middle, right].
     /// "" = tease the pet only, spawn nothing.
     pub click: [String; 3],
@@ -44,7 +43,7 @@ impl Config {
         [String::new(), "kitty".to_owned(), right.to_owned()]
     }
 
-    pub fn parse(raw: Value, pet: &str) -> Config {
+    pub fn parse(raw: &Value, pet: &str) -> Config {
         let fallback = Self::default_click(pet);
         let click_cfg = raw
             .get("pets")
@@ -58,7 +57,7 @@ impl Config {
                 .unwrap_or_else(|| fallback[index].clone())
         };
         let click = [pick("left", 0), pick("middle", 1), pick("right", 2)];
-        Config { raw, click }
+        Config { click }
     }
 
     /// One file for all three pets:
@@ -77,7 +76,7 @@ impl Config {
             .ok()
             .and_then(|content| serde_json::from_str(&content).ok())
             .unwrap_or_else(|| serde_json::json!({}));
-        Config::parse(raw, env!("CARGO_PKG_NAME"))
+        Config::parse(&raw, env!("CARGO_PKG_NAME"))
     }
 }
 
@@ -109,28 +108,26 @@ mod tests {
 
     #[test]
     fn defaults_are_per_pet() {
-        let claude = Config::parse(serde_json::json!({}), "claude-girl");
+        let claude = Config::parse(&serde_json::json!({}), "claude-girl");
         assert_eq!(claude.click, ["", "kitty", "kitty claude"]);
-        let dsh = Config::parse(serde_json::json!({}), "dsh-girl");
+        let dsh = Config::parse(&serde_json::json!({}), "dsh-girl");
         assert_eq!(dsh.click, ["", "kitty", "kitty dsh-tui"]);
-        let codex = Config::parse(serde_json::json!({}), "codex-girl");
+        let codex = Config::parse(&serde_json::json!({}), "codex-girl");
         assert_eq!(codex.click, ["", "kitty", "kitty codex"]);
     }
 
     #[test]
     fn one_section_overrides_only_that_pet() {
         let raw = serde_json::json!({
-            "poll": { "systemState": 500 },
             "pets": {
                 "claude-girl": {
                     "click": { "middle": "foot", "right": "kitty claude --resume" }
                 }
             }
         });
-        let claude = Config::parse(raw.clone(), "claude-girl");
+        let claude = Config::parse(&raw, "claude-girl");
         assert_eq!(claude.click, ["", "foot", "kitty claude --resume"]);
-        assert_eq!(claude.raw["poll"]["systemState"], 500);
-        let dsh = Config::parse(raw, "dsh-girl");
+        let dsh = Config::parse(&raw, "dsh-girl");
         assert_eq!(dsh.click, ["", "kitty", "kitty dsh-tui"]);
     }
 }
