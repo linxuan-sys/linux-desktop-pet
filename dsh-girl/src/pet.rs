@@ -10,8 +10,8 @@ pub const HAPPY_MS: u64 = 6_500;
 pub const HAPPY_SKIP_MS: u64 = 3_500;
 // Three 10s work clips, then one 10s music clip. 28s puts the first music
 // on the boundary after three clips; 38s = 10s music + three more clips.
-const FIRST_MUSIC_AT: u64 = 28_000;
-const MUSIC_INTERVAL: u64 = 38_000;
+/// Terminal-focus cycle: two idle clips, typing, idle, music (50s total).
+const ACTION_STEPS: &[&str] = &["idle", "idle", "typing", "idle", "music"];
 const LOW_BATTERY_PCT: u32 = 20;
 
 /// The run window inside the 10s clip: the window moves from 1.5s to 4.5s.
@@ -113,8 +113,7 @@ pub struct Pet {
     hour: u32,
     battery_pct: u32,
     charging: bool,
-    next_music: u64,
-    music_until: Option<u64>,
+    action_step: usize,
     // position + walk state (screen coords; the picture window is bottom-anchored)
     pos_x: i32,
     pos_y: i32,
@@ -167,8 +166,7 @@ impl Pet {
             hour: 12,
             battery_pct: 100,
             charging: true,
-            next_music: LAZY_START,
-            music_until: None,
+            action_step: 0,
             pos_x: 0,
             pos_y: 0,
             max_x: i32::MAX,
@@ -205,9 +203,7 @@ impl Pet {
             self.at_step_start = true;
             self.last_state_mode = new_mode.to_string();
             if new_mode == "action" {
-                // entering action re-arms the music relay
-                self.next_music = LAZY_START;
-                self.music_until = None;
+                self.action_step = 0;
             }
         }
 
@@ -398,23 +394,9 @@ impl Pet {
                 return "drowsy";
             }
             Mode::Action => {
-                if self.next_music == LAZY_START {
-                    self.next_music = now + FIRST_MUSIC_AT;
-                }
-                if self.music_until.is_none() && now >= self.next_music {
-                    self.music_until = Some(now + CLIP_MS);
-                    self.next_music = now + MUSIC_INTERVAL;
-                }
-                if let Some(until) = self.music_until {
-                    if now < until {
-                        return "music";
-                    }
-                    self.music_until = None;
-                }
-                if self.spotify {
-                    return "dance";
-                }
-                return "typing";
+                let pose = ACTION_STEPS[self.action_step];
+                self.action_step = (self.action_step + 1) % ACTION_STEPS.len();
+                return pose;
             }
             Mode::Awake => {}
         }

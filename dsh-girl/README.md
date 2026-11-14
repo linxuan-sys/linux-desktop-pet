@@ -33,7 +33,7 @@ No Electron. No browser engine. No X11 fallback. Just a small Rust binary, a lib
 
 ### A day with her
 
-- **Work mode.** When Claude Code, OpenCode, or Codex is focused, she types along, takes a music break every few clips, and dances when Spotify is playing.
+- **Work mode.** When Claude Code, OpenCode, or Codex is focused, she runs a fixed 50-second loop: idle, idle, typing, idle, music. She does not walk while working.
 - **Awake mode.** When an AI CLI is running but not focused, she follows a relaxed routine: idle, look around, pick a random animation, idle again, wander across the screen.
 - **Rest mode.** When no AI CLI is running, she gets drowsy and falls asleep after a short transition.
 - **Small things.** Low battery, late night, a charger being plugged in, a clipboard copy — each has its own clip.
@@ -230,7 +230,7 @@ DSH Girl began as a port of clawd's state machine from static PNG poses to 10-se
 
 ### 她的一天
 
-- **工作模式。** 当你聚焦 Claude Code、OpenCode 或 Codex 时，她会陪着你敲代码；每几段动画会插一段听音乐，Spotify 播放时会跳舞。
+- **工作模式。** 当你聚焦 Claude Code、OpenCode 或 Codex 时，她会按固定 50 秒循环：发呆、发呆、写代码、发呆、听音乐；工作时不会走路。
 - **清醒模式。** 有 AI CLI 在跑但没有聚焦时，她会按自己的节奏生活：发呆、东张西望、随机做点小动作、再发呆，然后起身在桌面上走一走。
 - **休息模式。** 没有 AI CLI 在跑时，她会先犯困，再慢慢睡着。
 - **小事。** 低电量、深夜、插上电源、复制剪贴板，每种情况都有专属动画。

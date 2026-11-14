@@ -59,7 +59,7 @@ The three projects share the same engine and the same pose vocabulary, but each 
 - **357 hand-drawn animations.** Each pose is a 5120×5400 WebP sprite sheet: 8 columns × 15 rows, 120 frames of 640×360 at 12 fps, played as one complete 10-second loop.
 - **Native Wayland overlay.** `zwlr_layer_shell_v1`, fractional scaling, transparent background, click-through outside the artwork, input region derived from opaque pixels.
 - **AI-coding awareness.** Focus detection through niri IPC or the Hyprland socket, plus `/proc` scanning for `claude`, `opencode`, and `codex`. When you focus an AI CLI, the pet switches to work mode.
-- **A small daily routine.** Work mode types along and takes music breaks; awake mode idles, looks around, picks a random animation, and walks; rest mode gets drowsy and falls asleep.
+- **A small daily routine.** Work mode runs a fixed 50-second loop: two idle clips, typing, idle, music. Awake mode idles, looks around, picks a random animation, and walks; rest mode gets drowsy and falls asleep.
 - **Small reactions.** Happy hop on click, celebration when the charger is plugged in, low-battery reminder, late-night yawn, dance when MPRIS reports music, quiet "copy" animation when the clipboard changes.
 - **Walking.** The window moves only during the run window of the clip. Direction cycles two left runs, then two right runs; at a screen edge the window stops and the clip keeps running in place.
 - **Readable architecture.** Pet engine, Wayland host and sensors are separate modules. No framework, no runtime, no magic.
@@ -404,7 +404,7 @@ The source code in this repository is released under the **MIT License** — see
 - **357 段手绘动画。** 每个姿势是一张 5120×5400 的 WebP 精灵图：8 列 × 15 行，120 帧 640×360，12 fps，完整播放 10 秒。
 - **原生 Wayland 覆盖层。** `zwlr_layer_shell_v1`、分数缩放、透明背景、画面外点击穿透，输入区域由不透明像素决定。
 - **感知 AI 编程状态。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口，通过 `/proc` 识别 `claude`、`opencode`、`codex`。聚焦 AI CLI 时自动进入工作模式。
-- **自己的小日常。** 工作模式陪你敲代码、间歇听音乐；清醒模式发呆、东张西望、随机做动作、起身散步；休息模式先犯困再睡着。
+- **自己的小日常。** 工作模式固定 50 秒循环：两段发呆、一段写代码、一段发呆、一段听音乐；清醒模式发呆、东张西望、随机做动作、起身散步；休息模式先犯困再睡着。
 - **小小的反应。** 点击开心跳、插电源庆祝、低电量提醒、深夜打哈欠、MPRIS 有音乐时跳舞、剪贴板变化时安静“记录”。
 - **走路。** 只在动画的奔跑窗口移动；方向循环是两次左跑、两次右跑；碰到屏幕边缘会 clamp，窗口停住但动画继续原地踏步。
 - **可读的架构。** 宠物引擎、Wayland 宿主、传感器各自独立；没有框架、没有运行时、没有魔法。
