@@ -244,6 +244,7 @@ mod tests {
 #[cfg(test)]
 mod live_tests {
     use super::*;
+    use crate::sensors::focus::Cache;
     use std::sync::{Arc, Mutex};
 
     /// connects to the real compositor for ~2s and prints the cache.

@@ -2,6 +2,7 @@
 name = "codex-girl"
 version = "3.0.0"
 edition = "2024"
+rust-version = "1.88"
 description = "Codex Girl — a desktop pet that walks on your Linux desktop"
 
 [dependencies]
@@ -15,9 +16,4 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 tempfile = "3.27.0"
 zbus = "5"
 wl-clipboard-rs = "0.9"
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
-opt-level = "s"
+webp.workspace = true

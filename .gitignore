@@ -2,3 +2,6 @@ target/
 */*.config.json
 *.log
 .DS_Store
+.codegraph/
+
+*/media/optimized/
