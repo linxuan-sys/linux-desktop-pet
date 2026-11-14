@@ -185,7 +185,7 @@ src/
     mod.rs             Host trait, input regions
     wl.rs              Wayland layer-shell host
   sensors/
-    linux.rs           system state, CLI detection, focus rules
+    linux.rs           system state, terminal matching, focus rules
     focus/             niri / Hyprland / fallback focus sources
     mpris.rs           music playback via D-Bus
     battery.rs         battery and charging state
@@ -382,7 +382,7 @@ src/
     mod.rs             Host trait、输入区域
     wl.rs              Wayland layer-shell 宿主
   sensors/
-    linux.rs           系统状态、CLI 检测、焦点规则
+    linux.rs           系统状态、终端匹配、焦点规则
     focus/             niri / Hyprland / 兜底焦点源
     mpris.rs           通过 D-Bus 读取音乐状态
     battery.rs         电量与充电状态

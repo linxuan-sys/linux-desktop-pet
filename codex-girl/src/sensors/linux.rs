@@ -1,5 +1,5 @@
-// Linux sensor impls: /proc-based CLI detection, real config loading,
-// compositor focus via the niri event-stream.
+// Linux sensor impls: terminal-focus matching and the 2.5s system-state
+// poll; focus events arrive from the niri or Hyprland event stream.
 
 use super::battery;
 use super::focus::SharedCache;
