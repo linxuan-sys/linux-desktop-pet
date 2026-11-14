@@ -11,35 +11,36 @@ use chrono::Timelike;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::is_cli_focus;
 
     #[test]
-    fn recognizes_the_ai_clis() {
-        assert!(is_cli_focus("claude: Claude Code", "kitty"));
-        assert!(is_cli_focus("kitty", "claude"));
-        assert!(is_cli_focus("OC | Greeting", "kitty"), "opencode titles its terminal 'OC | …'");
-        assert!(is_cli_focus("refactor", "Dev.sandbox-opencode"));
-        // Codex thread titles may mention Codex; native app ids also match
-        assert!(is_cli_focus("Codex - any thread", "kitty"));
-        assert!(is_cli_focus("any title", "codex"));
-        assert!(!is_cli_focus("zsh in adarsh", "kitty"));
-        assert!(!is_cli_focus("logos", "dev.duxlabs.files"));
+    fn recognizes_terminals() {
+        assert!(is_terminal_focus("kitty"));
+        assert!(is_terminal_focus("com.mitchellh.ghostty"));
+        assert!(is_terminal_focus("org.gnome.Terminal"));
+        assert!(is_terminal_focus("org.kde.konsole"));
+        assert!(is_terminal_focus("Alacritty"));
+        assert!(is_terminal_focus("org.wezfurlong.wezterm"));
+        assert!(is_terminal_focus("foot"));
+        assert!(is_terminal_focus("st-256color"));
+        assert!(!is_terminal_focus("org.gnome.Nautilus"));
+        assert!(!is_terminal_focus("wechat"));
     }
 }
 
-/// Focused-window rule: title/app identifies the AI CLI. The claude CLI
-/// sets 'Claude Code' in titles; opencode titles terminals 'OC | …'; Codex
-/// keeps the thread name in the title, so only threads that mention Codex
-/// are recognized (a native Codex window matches on app id).
-fn is_cli_focus(title: &str, app: &str) -> bool {
-    title.contains("Claude Code")
-        || title.contains("OpenCode")
-        || title.starts_with("OC |")
-        || title.contains("Codex")
-        || title.contains("codex")
-        || app == "claude"
-        || app.contains("opencode")
-        || app.contains("codex")
+/// No generic Wayland "terminal" app id; "term" catches most, plus the
+/// terminals whose ids do not contain it.
+fn is_terminal_focus(app: &str) -> bool {
+    let app = app.to_ascii_lowercase();
+    const TERMINALS: &[&str] = &[
+        "term", "kitty", "ghostty", "foot", "alacritty", "konsole", "tilix",
+        "guake", "yakuake", "tilda", "sakura", "rxvt", "ptyxis", "blackbox",
+        "kgx", "gnome.console", "contour", "tabby", "hyper", "dev.warp.warp",
+    ];
+    app == "st"
+        || app == "st-256color"
+        || app == "rio"
+        || app == "warp"
+        || TERMINALS.iter().any(|t| app.contains(t))
 }
 
 pub fn poll_system_state(focus_cache: &SharedCache) -> DerivedState {
@@ -48,14 +49,14 @@ pub fn poll_system_state(focus_cache: &SharedCache) -> DerivedState {
         + count_paths("/proc", "codex") as u32;
     let spotify_playing = mpris::read().playing;
     let focused = focus_cache.lock().unwrap().window.clone();
-    let is_cli_focused = is_cli_focus(&focused.title, &focused.app);
+    let is_terminal = is_terminal_focus(&focused.app);
 
     let (battery_pct, is_charging) = battery::read()
         .map(|b| (u32::from(b.percent), b.charging))
         .unwrap_or((100, true));
 
     DerivedState {
-        mode: if is_cli_focused {
+        mode: if is_terminal {
             "action".to_string()
         } else if cli_count > 0 {
             "awake".to_string()
