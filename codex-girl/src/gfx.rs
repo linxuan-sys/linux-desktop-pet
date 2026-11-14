@@ -107,7 +107,7 @@ fn pose_anim(pose: &str) -> Option<&'static str> {
         "copy" => "记录",
         "charging" => "庆祝",
         "low-battery" => "没电",
-        "late-night" | "drowsy" => "打哈欠",
+        "drowsy" => "打哈欠",
         "asleep" => "睡觉",
         _ => return None,
     })

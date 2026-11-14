@@ -27,16 +27,16 @@ No Electron. No browser engine. No X11 fallback. Just a small Rust binary, a lib
 
 - **90 hand-drawn animations.** Every pose is a 640×360 sprite sheet, 8×15 frames at 12 fps, played as a complete 10-second loop. No frame is cut in half.
 - **Native Wayland, built for niri and Hyprland.** A `zwlr_layer_shell_v1` overlay surface, fractional-scale aware, with click-through transparency and an input region that follows the visible artwork.
-- **Aware of your terminal.** Focus detection through niri IPC or the Hyprland socket, matched on the focused window's app id against a list of common Linux terminals. `/proc` detection for `claude`, `opencode`, and `codex`. When you focus any terminal, she switches to work mode.
+- **Aware of your terminal.** Focus detection through niri IPC or the Hyprland socket, matched on the focused window's app id against a list of common Linux terminals. When you focus any terminal, she switches to work mode; otherwise she follows her own relaxed routine.
 - **Small reactions that make a difference.** A happy hop on click, a celebration when you plug in, a gentle reminder when the battery is low, a yawn late at night, a little dance when music is playing, and a quiet `copy` animation when you copy something.
 - **A small, readable codebase.** The pet engine, the Wayland host, and the sensors are separate modules. No framework, no runtime, no background daemon.
 
 ### A day with her
 
 - **Work mode.** When any terminal window is focused, she runs a fixed 50-second loop: idle, idle, typing, idle, music. She does not walk while working. Music has top priority: whenever a player reports playing, she dances instead of the loop.
-- **Awake mode.** When a terminal is not focused but `claude`, `opencode`, or `codex` is still running, she follows a relaxed routine: idle, look around, pick a random animation, idle again, wander across the screen.
-- **Rest mode.** When no terminal is focused and none of those processes is running, she gets drowsy and falls asleep after a short transition.
-- **Small things.** Low battery, late night, a charger being plugged in, a clipboard copy — each has its own clip.
+- **Awake mode.** When no terminal is focused, she follows a relaxed routine: idle, look around, pick a random animation, idle again, wander across the screen.
+- **Priority order.** A clipboard copy beats everything, then music playing (she dances), then yawning and sleeping after midnight (00:00–06:00 she yawns once, then sleeps even in a focused terminal), then the work loop. Low battery and the charger celebration sit inside the awake schedule.
+- **Small things.** Low battery, a charger being plugged in, a clipboard copy — each has its own clip.
 
 ### Requirements
 
@@ -143,7 +143,7 @@ focus socket ─────► SharedCache ───┘
 clipboard ────────► reaction ──────┘
 ```
 
-- **Sensors.** A background thread polls system state every 2.5 seconds: focused window, CLI process count, MPRIS playback, battery, hour. A compositor-specific thread streams focus events into a shared cache.
+- **Sensors.** A background thread polls system state every 2.5 seconds: focused window, MPRIS playback, battery, hour. A compositor-specific thread streams focus events into a shared cache.
 - **Pet engine.** The state machine locks each pose for a full 10-second clip. Reactions (happy, charging, copy) can interrupt on click or wait for the current clip to finish. The awake routine is seven steps: idle, idle, random, idle, idle, random, walk.
 - **Walking.** A walk is one 10-second clip; the window travels 150 logical pixels during the 3.0–5.5 s run window. The direction cycle is two left runs, then two right runs; at a screen edge the window stops and the clip keeps running in place.
 - **Renderer.** `Sheet` loads a WebP sprite sheet lazily, keeps a small LRU cache, and blits one 640×360 frame into the shared-memory buffer. The layer surface is transparent; the input region is built from opaque pixels, so clicks only land on the pet.
@@ -169,7 +169,7 @@ The pose-to-file mapping lives in `src/gfx.rs`:
 | `copy` | `记录` |
 | `charging` | `庆祝` |
 | `low-battery` | `没电` |
-| `late-night` / `drowsy` | `打哈欠` |
+| `drowsy` | `打哈欠` |
 | `asleep` | `睡觉` |
 
 To add a random animation, put a new WebP in `media/anim/` and add its stem to `EASTER_ACTIONS` in `src/pet.rs`. To add a dedicated state, map the new stem in `pose_anim` in `src/gfx.rs`.
@@ -190,7 +190,7 @@ src/
     mpris.rs           music playback via D-Bus
     battery.rs         battery and charging state
     clipboard.rs       Wayland clipboard watcher
-    proc.rs            /proc scanning and config loading
+    proc.rs            config loading
     state.rs           DerivedState
 media/anim/            90 WebP animation sheets
 docs/poster.png        promotional poster
@@ -224,16 +224,16 @@ Codex Girl began as a port of clawd's state machine from static PNG poses to 10-
 
 - **90 段手绘动画。** 每个姿势是一张 640×360 的精灵图，8×15 帧、12 fps，完整播放一段 10 秒动画，绝不半路切走。
 - **原生 Wayland，为 niri 和 Hyprland 打造。** 使用 `zwlr_layer_shell_v1` 覆盖层，支持分数缩放；透明点击穿透，输入区域跟随实际画面。
-- **感知你的终端。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口的 app id，和常见 Linux 终端名单比对；通过 `/proc` 识别 `claude`、`opencode`、`codex` 进程。只要聚焦任意终端，她就切换到工作模式。
-- **恰到好处的小反应。** 点击会开心跳一下；插上电源会庆祝；电量低会提醒；深夜会打哈欠；有音乐时会跟着跳舞；复制内容时会安静地“记录”。
+- **感知你的终端。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口的 app id，和常见 Linux 终端名单比对。聚焦任意终端就切换到工作模式，否则按自己的节奏生活。
+- **恰到好处的小反应。** 点击会开心跳一下；插上电源会庆祝；电量低会提醒；有音乐时会跟着跳舞；复制内容时会安静地“记录”。
 - **小而可读的代码。** 宠物引擎、Wayland 宿主、传感器各自独立；没有框架、没有运行时、没有后台守护进程。
 
 ### 她的一天
 
 - **工作模式。** 只要你聚焦任意终端窗口，她就按固定 50 秒循环：发呆、发呆、写代码、发呆、听音乐；工作时不会走路。跳舞优先级最高：只要有音乐在播放，就跳舞，不跑这个循环。
-- **清醒模式。** 没有聚焦终端，但 `claude`、`opencode`、`codex` 还在跑时，她会按自己的节奏生活：发呆、东张西望、随机做点小动作、再发呆，然后起身在桌面上走一走。
-- **休息模式。** 既没聚焦终端、也没有上述进程在跑时，她会先犯困，再慢慢睡着。
-- **小事。** 低电量、深夜、插上电源、复制剪贴板，每种情况都有专属动画。
+- **清醒模式。** 没有聚焦终端时，她会按自己的节奏生活：发呆、东张西望、随机做点小动作、再发呆，然后起身在桌面上走一走。
+- **优先级顺序。** 复制剪贴板 > 有音乐在播放（跳舞）> 0 点之后打哈欠再睡（00:00–06:00 先打一次哈欠，然后就算聚焦终端也睡）> 工作循环。低电量和插电源庆祝只在清醒日程里生效。
+- **小事。** 低电量、插上电源、复制剪贴板，每种情况都有专属动画。
 
 ### 环境要求
 
@@ -366,7 +366,7 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 | `copy` | `记录` |
 | `charging` | `庆祝` |
 | `low-battery` | `没电` |
-| `late-night` / `drowsy` | `打哈欠` |
+| `drowsy` | `打哈欠` |
 | `asleep` | `睡觉` |
 
 想加入随机动作：把新的 WebP 放进 `media/anim/`，再把文件名（不含扩展名）加到 `src/pet.rs` 的 `EASTER_ACTIONS`。想加入专属状态：在 `src/gfx.rs` 的 `pose_anim` 里建立映射。
@@ -387,7 +387,7 @@ src/
     mpris.rs           通过 D-Bus 读取音乐状态
     battery.rs         电量与充电状态
     clipboard.rs       Wayland 剪贴板监听
-    proc.rs            /proc 扫描与配置加载
+    proc.rs            配置加载
     state.rs           DerivedState
 media/anim/            90 张 WebP 动画精灵图
 docs/poster.png        宣传海报

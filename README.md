@@ -58,9 +58,9 @@ The three projects share the same engine and the same pose vocabulary, but each 
 
 - **357 hand-drawn animations.** Each pose is a 5120×5400 WebP sprite sheet: 8 columns × 15 rows, 120 frames of 640×360 at 12 fps, played as one complete 10-second loop.
 - **Native Wayland overlay.** `zwlr_layer_shell_v1`, fractional scaling, transparent background, click-through outside the artwork, input region derived from opaque pixels.
-- **Terminal awareness.** Focus detection through niri IPC or the Hyprland socket, matched on the focused window's app id against a list of common Linux terminals, plus `/proc` scanning for `claude`, `opencode`, and `codex`. Focusing any terminal switches the pet to work mode.
-- **A small daily routine.** Work mode runs a fixed 50-second loop: two idle clips, typing, idle, music. It starts as soon as any terminal is focused. Music has top priority: whenever MPRIS reports a player playing, she dances instead of running the loop. Awake mode (a CLI process running with no terminal focused) idles, looks around, picks a random animation, and walks; rest mode gets drowsy and falls asleep.
-- **Small reactions.** Happy hop on click, celebration when the charger is plugged in, low-battery reminder, late-night yawn, dance when MPRIS reports music, quiet "copy" animation when the clipboard changes.
+- **Terminal awareness.** Focus detection through niri IPC or the Hyprland socket, matched on the focused window's app id against a list of common Linux terminals. Focusing any terminal switches the pet to work mode; otherwise she follows her relaxed awake routine.
+- **A small daily routine.** Work mode runs a fixed 50-second loop: two idle clips, typing, idle, music. It starts as soon as any terminal is focused. Awake mode (no terminal focused) idles, looks around, picks a random animation, and walks. Between 00:00 and 06:00 she alternates a yawn and a nap instead of either, and music still wins over everything.
+- **Small reactions.** Happy hop on click, celebration when the charger is plugged in, low-battery reminder, dance when MPRIS reports music, quiet "copy" animation when the clipboard changes. A clipboard copy outranks everything else. Priority, highest first: clipboard copy, music playing (dance), yawning then sleeping after midnight, then the work loop.
 - **Walking.** The window moves only during the run window of the clip. Direction cycles two left runs, then two right runs; at a screen edge the window stops and the clip keeps running in place.
 - **Readable architecture.** Pet engine, Wayland host and sensors are separate modules. No framework, no runtime, no magic.
 - **Configuration and click commands.** A small JSON file maps each mouse button to a terminal command; commands are split on whitespace and spawned directly, with a 1200 ms click debounce.
@@ -281,7 +281,7 @@ focus socket ─────► SharedCache ───┘
 clipboard ────────► reaction ──────┘
 ```
 
-- **Sensors.** A background thread polls focused window, CLI process count, MPRIS playback, battery and hour every 2.5 seconds. A compositor-specific thread streams focus events into a shared cache.
+- **Sensors.** A background thread polls focused window, MPRIS playback, battery and hour every 2.5 seconds. A compositor-specific thread streams focus events into a shared cache.
 - **Pet engine.** Each pose is locked for a complete 10-second clip. A click interrupts immediately; charging, copy and other reactions wait for the current clip to finish. The awake routine is seven steps: idle, idle, random, idle, idle, random, walk.
 - **Walking.** The window is stationary before and after the run window, interpolates its position during the run, and clamps at the screen edges; at an edge the window stops and the clip runs in place.
 - **Renderer.** `Sheet` loads WebP sprite sheets lazily, keeps a small LRU cache, pins the click-happy sheet, and blits one 640×360 frame into the shared-memory buffer. The layer surface stays transparent; the input region follows the visible pixels.
@@ -307,7 +307,7 @@ The dedicated pose mapping used by Claude Girl and DSH Girl:
 | `copy` | `轻快记录` |
 | `charging` | `工作状态-雀跃庆祝` |
 | `low-battery` | `工作状态-垂头叹气冒汗` |
-| `late-night` / `drowsy` | `哈欠连天` |
+| `drowsy` | `哈欠连天` |
 | `asleep` | `原地小憩沉眠` |
 
 Codex Girl uses the same states with her own clip names: `待机`, `开心`, `跳舞`, `写代码`, `听音乐`, `奔跑`, `记录`, `庆祝`, `没电`, `打哈欠`, `睡觉`.
@@ -330,7 +330,7 @@ linux-desktop-pet/
 │   │   ├── pet.rs            pose scheduler and state machine
 │   │   ├── gfx.rs            WebP sheet loader and compositor
 │   │   ├── host/             Wayland layer-shell host
-│   │   └── sensors/          focus, MPRIS, battery, clipboard, /proc
+│   │   └── sensors/          focus, MPRIS, battery, clipboard
 │   ├── media/anim/           166 WebP animation sheets
 │   ├── docs/poster.png
 │   ├── README.md
@@ -403,9 +403,9 @@ The source code in this repository is released under the **MIT License** — see
 
 - **357 段手绘动画。** 每个姿势是一张 5120×5400 的 WebP 精灵图：8 列 × 15 行，120 帧 640×360，12 fps，完整播放 10 秒。
 - **原生 Wayland 覆盖层。** `zwlr_layer_shell_v1`、分数缩放、透明背景、画面外点击穿透，输入区域由不透明像素决定。
-- **感知终端。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口的 app id，和常见 Linux 终端名单比对；通过 `/proc` 识别 `claude`、`opencode`、`codex` 进程。只要聚焦任意终端就进入工作模式。
-- **自己的小日常。** 工作模式固定 50 秒循环：两段发呆、一段写代码、一段发呆、一段听音乐，只要聚焦任意终端就开始；只要 MPRIS 报告有音乐在播放，跳舞优先级最高，会盖掉整个循环。清醒模式（有 CLI 进程在跑但没聚焦终端）发呆、东张西望、随机做动作、起身散步；休息模式先犯困再睡着。
-- **小小的反应。** 点击开心跳、插电源庆祝、低电量提醒、深夜打哈欠、MPRIS 有音乐时跳舞、剪贴板变化时安静“记录”。
+- **感知终端。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口的 app id，和常见 Linux 终端名单比对。聚焦任意终端就进入工作模式，否则按清醒日程生活。
+- **自己的小日常。** 工作模式固定 50 秒循环：两段发呆、一段写代码、一段发呆、一段听音乐，只要聚焦任意终端就开始。清醒模式（没聚焦终端）发呆、东张西望、随机做动作、起身散步。00:00–06:00 之间改为哈欠和睡觉轮流播放，音乐仍然盖过一切。
+- **小小的反应。** 点击开心跳、插电源庆祝、低电量提醒、MPRIS 有音乐时跳舞、剪贴板变化时安静“记录”。复制剪贴板的优先级高于其他所有状态。优先级从高到低：复制剪贴板、音乐播放（跳舞）、0 点后打哈欠再睡、工作循环。
 - **走路。** 只在动画的奔跑窗口移动；方向循环是两次左跑、两次右跑；碰到屏幕边缘会 clamp，窗口停住但动画继续原地踏步。
 - **可读的架构。** 宠物引擎、Wayland 宿主、传感器各自独立；没有框架、没有运行时、没有魔法。
 - **配置与点击命令。** 一个 JSON 把每个鼠标键映射到终端命令；命令按空白拆分后直接启动，点击有 1200 毫秒防抖。
@@ -626,7 +626,7 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 剪贴板 ───────────► 反应 ──────────┘
 ```
 
-- **传感器。** 后台线程每 2.5 秒轮询焦点窗口、CLI 进程数量、MPRIS 播放状态、电池和小时。合成器专用线程把焦点事件写入共享缓存。
+- **传感器。** 后台线程每 2.5 秒轮询焦点窗口、MPRIS 播放状态、电池和小时。合成器专用线程把焦点事件写入共享缓存。
 - **宠物引擎。** 每个姿势锁定一整段 10 秒动画。点击可以立刻打断；充电、复制等反应会等当前片段播完。清醒时的日程是七步：发呆、发呆、随机、发呆、发呆、随机、走路。
 - **走路。** 奔跑窗口之前和之后窗口保持不动，窗口期间插值移动，碰到屏幕边缘会 clamp；贴边时窗口停住，动画继续原地踏步。
 - **渲染器。** `Sheet` 按需加载 WebP 精灵图，维护一个小型 LRU 缓存，并固定点击开心素材，避免点击时等待加载。每帧把一张 640×360 的画面 blit 到共享内存缓冲区；layer 表面保持透明，输入区域跟随可见像素。
@@ -652,7 +652,7 @@ Claude Girl 和 DSH Girl 使用的专属姿势映射：
 | `copy` | `轻快记录` |
 | `charging` | `工作状态-雀跃庆祝` |
 | `low-battery` | `工作状态-垂头叹气冒汗` |
-| `late-night` / `drowsy` | `哈欠连天` |
+| `drowsy` | `哈欠连天` |
 | `asleep` | `原地小憩沉眠` |
 
 Codex Girl 使用同一组状态，但素材名是：`待机`、`开心`、`跳舞`、`写代码`、`听音乐`、`奔跑`、`记录`、`庆祝`、`没电`、`打哈欠`、`睡觉`。
@@ -675,7 +675,7 @@ linux-desktop-pet/
 │   │   ├── pet.rs            姿势调度与状态机
 │   │   ├── gfx.rs            WebP 精灵图加载与合成
 │   │   ├── host/             Wayland layer-shell 宿主
-│   │   └── sensors/          焦点、MPRIS、电池、剪贴板、/proc
+│   │   └── sensors/          焦点、MPRIS、电池、剪贴板
 │   ├── media/anim/           166 张 WebP 动画
 │   ├── docs/poster.png
 │   ├── README.md

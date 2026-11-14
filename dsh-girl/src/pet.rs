@@ -100,8 +100,6 @@ enum Reaction {
 enum Mode {
     Awake,
     Action,
-    Drowsy,
-    Asleep,
 }
 
 pub struct Pet {
@@ -209,21 +207,15 @@ impl Pet {
 
         self.mode = match new_mode {
             "action" => Mode::Action,
-            // keep the drowsy -> asleep progression; every 2.5s state poll
-            // must not push a sleeping pet back to drowsy
-            "asleep" => match self.mode {
-                Mode::Drowsy | Mode::Asleep => self.mode,
-                _ => Mode::Drowsy,
-            },
             _ => Mode::Awake,
         };
     }
 
+    /// A clipboard copy beats everything: dance, night sleep, work loop,
+    /// and any reaction already on screen.
     pub fn on_copy(&mut self, _now: u64) {
-        // upstream gate (canClipboardReact): awake only
-        if self.reaction.is_none() && matches!(self.mode, Mode::Awake) {
-            self.reaction = Some(Reaction::Copy { start: LAZY_START });
-        }
+        self.walk = None;
+        self.reaction = Some(Reaction::Copy { start: LAZY_START });
     }
 
     /// A click interrupts whatever is on screen, including a walk or typing,
@@ -345,7 +337,9 @@ impl Pet {
         // the running clip finishes so no animation is cut in half.
         let mut reaction_pose = None;
         if let Some(r) = &mut self.reaction {
-            let urgent = matches!(r, Reaction::Happy { .. });
+            // copy and the click hop cut in at once; the rest wait for
+            // the running clip to finish
+            let urgent = matches!(r, Reaction::Happy { .. } | Reaction::Copy { .. });
             if urgent || clip_done {
                 match r {
                     Reaction::Happy { .. } => {}
@@ -387,15 +381,12 @@ impl Pet {
         if self.spotify {
             return "dance";
         }
+        // after midnight she alternates yawning and sleeping, even while a
+        // terminal is focused
+        if self.hour < 6 {
+            return if self.current == Some("drowsy") { "asleep" } else { "drowsy" };
+        }
         match self.mode {
-            Mode::Asleep => return "asleep",
-            Mode::Drowsy => {
-                if self.current == Some("drowsy") {
-                    self.mode = Mode::Asleep;
-                    return "asleep";
-                }
-                return "drowsy";
-            }
             Mode::Action => {
                 let pose = ACTION_STEPS[self.action_step];
                 self.action_step = (self.action_step + 1) % ACTION_STEPS.len();
@@ -406,9 +397,6 @@ impl Pet {
 
         if self.battery_pct <= LOW_BATTERY_PCT && !self.charging {
             return "low-battery";
-        }
-        if self.hour < 6 {
-            return "late-night";
         }
 
         // Advance the schedule by exactly one step per finished clip.

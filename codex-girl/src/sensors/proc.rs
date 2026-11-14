@@ -1,29 +1,8 @@
-// /proc-based AI CLI detection + shared config loading.
-// pet detection scans /proc/*/comm for AI CLI processes; the loader reads
-// the shared $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json.
+// Shared config loading.
+// The loader reads $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json.
 
 use serde_json::Value;
 use std::path::PathBuf;
-
-/// Counts processes whose /proc/<pid>/comm matches `comm`.
-/// Tolerates pids appearing/disappearing mid-scan (skips unreadable entries).
-pub fn count_paths(dir: &str, comm: &str) -> usize {
-    let mut count = 0;
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    for entry in entries.flatten() {
-        if !entry.file_name().to_string_lossy().chars().all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        if let Ok(text) = std::fs::read_to_string(entry.path().join("comm")) {
-            if text.trim() == comm {
-                count += 1;
-            }
-        }
-    }
-    count
-}
 
 /// The pet's click commands.
 pub struct Config {
@@ -83,28 +62,6 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn counts_one_claude_among_decoys() {
-        let dir = std::env::temp_dir().join("codex-girl-proc-test");
-        let _ = std::fs::remove_dir_all(&dir);
-        for (pid, comm) in [
-            ("100", "claude"),
-            ("101", "kitty"),
-            ("102", "claude"),
-        ] {
-            std::fs::create_dir_all(dir.join(pid)).unwrap();
-            std::fs::write(dir.join(pid).join("comm"), format!("{comm}\n")).unwrap();
-        }
-        std::fs::write(dir.join("acpi"), "\n").unwrap();
-        assert_eq!(count_paths(dir.to_str().unwrap(), "claude"), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn missing_dir_is_zero() {
-        assert_eq!(count_paths("/nonexistent-codex-girl-test", "claude"), 0);
-    }
 
     #[test]
     fn defaults_are_per_pet() {

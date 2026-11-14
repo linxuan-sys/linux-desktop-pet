@@ -5,7 +5,6 @@ use super::battery;
 use super::focus::SharedCache;
 use super::mpris;
 use super::state::DerivedState;
-use super::proc::count_paths;
 use chrono::Timelike;
 
 #[cfg(test)]
@@ -44,9 +43,6 @@ fn is_terminal_focus(app: &str) -> bool {
 }
 
 pub fn poll_system_state(focus_cache: &SharedCache) -> DerivedState {
-    let cli_count = count_paths("/proc", "claude") as u32
-        + count_paths("/proc", "opencode") as u32
-        + count_paths("/proc", "codex") as u32;
     let spotify_playing = mpris::read().playing;
     let focused = focus_cache.lock().unwrap().window.clone();
     let is_terminal = is_terminal_focus(&focused.app);
@@ -58,10 +54,8 @@ pub fn poll_system_state(focus_cache: &SharedCache) -> DerivedState {
     DerivedState {
         mode: if is_terminal {
             "action".to_string()
-        } else if cli_count > 0 {
-            "awake".to_string()
         } else {
-            "asleep".to_string()
+            "awake".to_string()
         },
         spotify_playing,
         hour: chrono::Local::now().hour(),
