@@ -27,15 +27,15 @@ No Electron. No browser engine. No X11 fallback. Just a small Rust binary, a lib
 
 - **90 hand-drawn animations.** Every pose is a 640×360 sprite sheet, 8×15 frames at 12 fps, played as a complete 10-second loop. No frame is cut in half.
 - **Native Wayland, built for niri and Hyprland.** A `zwlr_layer_shell_v1` overlay surface, fractional-scale aware, with click-through transparency and an input region that follows the visible artwork.
-- **Aware of your AI coding session.** Focus detection through niri IPC or the Hyprland socket; `/proc` detection for `claude`, `opencode`, and `codex`. When you focus an AI CLI, she switches to work mode.
+- **Aware of your terminal.** Focus detection through niri IPC or the Hyprland socket, matched on the focused window's app id against a list of common Linux terminals. `/proc` detection for `claude`, `opencode`, and `codex`. When you focus any terminal, she switches to work mode.
 - **Small reactions that make a difference.** A happy hop on click, a celebration when you plug in, a gentle reminder when the battery is low, a yawn late at night, a little dance when music is playing, and a quiet `copy` animation when you copy something.
 - **A small, readable codebase.** The pet engine, the Wayland host, and the sensors are separate modules. No framework, no runtime, no background daemon.
 
 ### A day with her
 
-- **Work mode.** When Claude Code, OpenCode, or Codex is focused, she runs a fixed 50-second loop: idle, idle, typing, idle, music. She does not walk while working.
-- **Awake mode.** When an AI CLI is running but not focused, she follows a relaxed routine: idle, look around, pick a random animation, idle again, wander across the screen.
-- **Rest mode.** When no AI CLI is running, she gets drowsy and falls asleep after a short transition.
+- **Work mode.** When any terminal window is focused, she runs a fixed 50-second loop: idle, idle, typing, idle, music. She does not walk while working. Music has top priority: whenever a player reports playing, she dances instead of the loop.
+- **Awake mode.** When a terminal is not focused but `claude`, `opencode`, or `codex` is still running, she follows a relaxed routine: idle, look around, pick a random animation, idle again, wander across the screen.
+- **Rest mode.** When no terminal is focused and none of those processes is running, she gets drowsy and falls asleep after a short transition.
 - **Small things.** Low battery, late night, a charger being plugged in, a clipboard copy — each has its own clip.
 
 ### Requirements
@@ -224,15 +224,15 @@ Codex Girl began as a port of clawd's state machine from static PNG poses to 10-
 
 - **90 段手绘动画。** 每个姿势是一张 640×360 的精灵图，8×15 帧、12 fps，完整播放一段 10 秒动画，绝不半路切走。
 - **原生 Wayland，为 niri 和 Hyprland 打造。** 使用 `zwlr_layer_shell_v1` 覆盖层，支持分数缩放；透明点击穿透，输入区域跟随实际画面。
-- **感知你的 AI 编程状态。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口，通过 `/proc` 识别 `claude`、`opencode`、`codex`。聚焦 AI CLI 时，她会切换到工作模式。
+- **感知你的终端。** 通过 niri IPC 或 Hyprland socket 读取焦点窗口的 app id，和常见 Linux 终端名单比对；通过 `/proc` 识别 `claude`、`opencode`、`codex` 进程。只要聚焦任意终端，她就切换到工作模式。
 - **恰到好处的小反应。** 点击会开心跳一下；插上电源会庆祝；电量低会提醒；深夜会打哈欠；有音乐时会跟着跳舞；复制内容时会安静地“记录”。
 - **小而可读的代码。** 宠物引擎、Wayland 宿主、传感器各自独立；没有框架、没有运行时、没有后台守护进程。
 
 ### 她的一天
 
-- **工作模式。** 当你聚焦 Claude Code、OpenCode 或 Codex 时，她会按固定 50 秒循环：发呆、发呆、写代码、发呆、听音乐；工作时不会走路。
-- **清醒模式。** 有 AI CLI 在跑但没有聚焦时，她会按自己的节奏生活：发呆、东张西望、随机做点小动作、再发呆，然后起身在桌面上走一走。
-- **休息模式。** 没有 AI CLI 在跑时，她会先犯困，再慢慢睡着。
+- **工作模式。** 只要你聚焦任意终端窗口，她就按固定 50 秒循环：发呆、发呆、写代码、发呆、听音乐；工作时不会走路。跳舞优先级最高：只要有音乐在播放，就跳舞，不跑这个循环。
+- **清醒模式。** 没有聚焦终端，但 `claude`、`opencode`、`codex` 还在跑时，她会按自己的节奏生活：发呆、东张西望、随机做点小动作、再发呆，然后起身在桌面上走一走。
+- **休息模式。** 既没聚焦终端、也没有上述进程在跑时，她会先犯困，再慢慢睡着。
 - **小事。** 低电量、深夜、插上电源、复制剪贴板，每种情况都有专属动画。
 
 ### 环境要求

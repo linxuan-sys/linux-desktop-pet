@@ -383,6 +383,9 @@ impl Pet {
 
     /// The pose to start once the running clip has finished.
     fn next_pose(&mut self, now: u64) -> &'static str {
+        if self.spotify {
+            return "dance";
+        }
         match self.mode {
             Mode::Asleep => return "asleep",
             Mode::Drowsy => {
@@ -400,9 +403,6 @@ impl Pet {
             Mode::Awake => {}
         }
 
-        if self.spotify {
-            return "dance";
-        }
         if self.battery_pct <= LOW_BATTERY_PCT && !self.charging {
             return "low-battery";
         }
