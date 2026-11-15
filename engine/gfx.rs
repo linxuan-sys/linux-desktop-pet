@@ -385,6 +385,76 @@ fn repair_body_matte(image: &mut RgbaImage, frame: &FrameMeta) {
     }
 }
 
+/// Ease a clip's final second into the first frame's brightness. Codex's
+/// legacy source sheets drift darker over each 10-second loop, so restarting at
+/// frame zero made the whole character flash brighter. Only RGB changes;
+/// pose, silhouette, alpha and the original asset files stay untouched.
+fn blend_loop_seam(image: &mut RgbaImage, meta: &Metadata) {
+    const TAIL: usize = 12;
+    if meta.frames.len() <= TAIL {
+        return;
+    }
+    let first = &meta.frames[0];
+    let last = &meta.frames[meta.frames.len() - 1];
+    let left = first.x.max(last.x);
+    let top = first.y.max(last.y);
+    let right = (first.x + first.width).min(last.x + last.width);
+    let bottom = (first.y + first.height).min(last.y + last.height);
+    if right <= left || bottom <= top {
+        return;
+    }
+    let mut first_sum = [0u64; 3];
+    let mut last_sum = [0u64; 3];
+    let mut samples = 0u64;
+    for y in (top..bottom).step_by(2) {
+        for x in (left..right).step_by(2) {
+            let a = image.get_pixel(first.atlas_x + x - first.x, first.atlas_y + y - first.y);
+            let b = image.get_pixel(last.atlas_x + x - last.x, last.atlas_y + y - last.y);
+            if a[3] == 0 || b[3] == 0 {
+                continue;
+            }
+            for c in 0..3 {
+                first_sum[c] += u64::from(a[c]);
+                last_sum[c] += u64::from(b[c]);
+            }
+            samples += 1;
+        }
+    }
+    if samples < 64 {
+        return;
+    }
+    let mut gain = [1.0f32; 3];
+    for c in 0..3 {
+        let first_mean = first_sum[c] as f32 / samples as f32;
+        let last_mean = last_sum[c] as f32 / samples as f32;
+        if last_mean < 1.0 {
+            return;
+        }
+        gain[c] = (first_mean / last_mean).clamp(0.85, 1.15);
+    }
+    let min_gain = gain.iter().copied().fold(f32::INFINITY, f32::min);
+    let max_gain = gain.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if max_gain - min_gain > 0.04 || gain.iter().all(|g| (g - 1.0).abs() < 0.004) {
+        return;
+    }
+    for index in meta.frames.len() - TAIL..meta.frames.len() {
+        let progress = (index + TAIL + 1 - meta.frames.len()) as f32 / TAIL as f32;
+        let weight = progress * progress * (3.0 - 2.0 * progress);
+        let frame = meta.frames[index].clone();
+        for y in 0..frame.height {
+            for x in 0..frame.width {
+                let pixel = image.get_pixel_mut(frame.atlas_x + x, frame.atlas_y + y);
+                if pixel[3] == 0 {
+                    continue;
+                }
+                for c in 0..3 {
+                    let scale = 1.0 + (gain[c] - 1.0) * weight;
+                    pixel[c] = (f32::from(pixel[c]) * scale).round().clamp(0.0, 255.0) as u8;
+                }
+            }
+        }
+    }
+}
 struct Anim {
     image: RgbaImage,
     meta: Metadata,
@@ -405,6 +475,7 @@ impl Anim {
             for frame in &meta.frames {
                 repair_body_matte(&mut image, frame);
             }
+            blend_loop_seam(&mut image, &meta);
         }
         Ok(Self { image, meta })
     }
@@ -716,6 +787,81 @@ mod tests {
         assert_eq!(im.get_pixel(19, 5)[3], 93);
     }
 
+    #[test]
+    fn loop_seam_brightens_only_the_tail_and_preserves_shape_and_alpha() {
+        let mut image = RgbaImage::new(16 * 120, 16);
+        let mut frames = Vec::new();
+        for index in 0..120 {
+            let value = if index == 0 { 220 } else { 200 };
+            for y in 0..16 {
+                for x in 0..16 {
+                    image.put_pixel(
+                        index * 16 + x,
+                        y,
+                        image::Rgba([value, value - 10, value - 20, 200]),
+                    );
+                }
+            }
+            frames.push(FrameMeta {
+                x: 0,
+                y: 0,
+                width: 16,
+                height: 16,
+                atlas_x: index * 16,
+                atlas_y: 0,
+            });
+        }
+        let meta = Metadata {
+            version: 2,
+            source_bytes: 0,
+            source_modified_ns: 0,
+            atlas_width: 16 * 120,
+            atlas_height: 16,
+            frames,
+        };
+        let alpha_before: Vec<u8> = image.pixels().map(|p| p[3]).collect();
+        blend_loop_seam(&mut image, &meta);
+        assert_eq!(image.get_pixel(0, 0).0, [220, 210, 200, 200]);
+        assert_eq!(image.get_pixel(107 * 16, 0).0, [200, 190, 180, 200]);
+        let tail = image.get_pixel(119 * 16, 0);
+        assert!((tail[0] as i16 - 220).abs() <= 1, "tail {tail:?}");
+        assert_eq!(
+            alpha_before,
+            image.pixels().map(|p| p[3]).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn loop_seam_does_not_guess_when_endpoints_share_no_visible_pixels() {
+        let mut image = RgbaImage::from_pixel(8, 4, image::Rgba([220, 210, 200, 255]));
+        for y in 0..4 {
+            for x in 4..8 {
+                image.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+            }
+        }
+        let frames = (0..120)
+            .map(|index| FrameMeta {
+                x: 0,
+                y: 0,
+                width: 4,
+                height: 4,
+                atlas_x: if index == 0 { 0 } else { 4 },
+                atlas_y: 0,
+            })
+            .collect();
+        let meta = Metadata {
+            version: 2,
+            source_bytes: 0,
+            source_modified_ns: 0,
+            atlas_width: 8,
+            atlas_height: 4,
+            frames,
+        };
+        let before = image.clone();
+        blend_loop_seam(&mut image, &meta);
+        assert_eq!(image, before);
+    }
+
     fn matte_fixture() -> (tempfile::TempDir, Metadata, RgbaImage) {
         let dir = library();
         let mut meta = load_metadata(dir.path(), "a").unwrap();
@@ -810,6 +956,48 @@ mod tests {
                     .all(|p| p[..3].iter().all(|v| *v <= p[3]))
             );
         }
+    }
+
+    #[test]
+    fn codex_raw_loop_blends_tail_without_touching_cleaned_assets() {
+        if env!("CARGO_PKG_NAME") != "codex-girl" {
+            return;
+        }
+        let dir = library();
+        let mut meta = load_metadata(dir.path(), "a").unwrap();
+        meta.atlas_width = 20 * 120;
+        meta.atlas_height = 20;
+        let mut image = RgbaImage::new(meta.atlas_width, meta.atlas_height);
+        for (index, frame) in meta.frames.iter_mut().enumerate() {
+            *frame = FrameMeta {
+                x: 0,
+                y: 0,
+                width: 20,
+                height: 20,
+                atlas_x: index as u32 * 20,
+                atlas_y: 0,
+            };
+            let value = if index == 0 { 220 } else { 200 };
+            for y in 0..20 {
+                for x in 0..20 {
+                    let alpha = if x == 0 && y == 0 { 128 } else { 255 };
+                    image.put_pixel(
+                        frame.atlas_x + x,
+                        y,
+                        image::Rgba([value, value - 10, value - 20, alpha]),
+                    );
+                }
+            }
+        }
+        image.save(dir.path().join("optimized/a.webp")).unwrap();
+        std::fs::write(dir.path().join("ASSETS.json"), r#"{"status":"raw"}"#).unwrap();
+        let raw = Anim::decode(&dir.path().join("optimized"), "a", meta.clone()).unwrap();
+        assert_eq!(raw.image.get_pixel(119 * 20 + 7, 7)[0], 220);
+        assert_eq!(raw.image.get_pixel(107 * 20 + 7, 7)[0], 200);
+        assert_eq!(raw.image.get_pixel(0, 0)[3], 128);
+        std::fs::write(dir.path().join("ASSETS.json"), r#"{"status":"cleaned"}"#).unwrap();
+        let cleaned = Anim::decode(&dir.path().join("optimized"), "a", meta).unwrap();
+        assert_eq!(cleaned.image, image);
     }
 
     fn await_clip(sheet: &mut Sheet, name: &str) {
