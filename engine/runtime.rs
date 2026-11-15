@@ -100,7 +100,8 @@ fn entry() -> Result<(), String> {
         return gfx::prepare_assets(&media, force);
     }
     let watcher = settings::Watcher::new()?;
-    let sheet = Sheet::load(&media, watcher.current.cache_mib)?;
+    let mut sheet = Sheet::load(&media, watcher.current.cache_mib)?;
+    sheet.set_premultiply(watcher.current.premultiply);
     let (tx, rx) = channel();
     spawn_sensor_threads(&tx);
     run(watcher, sheet, rx)
@@ -171,7 +172,9 @@ fn run(
     sheet.ready("happy");
     loop {
         let current = Instant::now();
-        if playing && !host.dragging() {
+        // Dragging no longer freezes the clock: the drag itself drives a
+        // clip, so the animation must keep advancing.
+        if playing {
             animation_time += current.duration_since(previous);
         }
         previous = current;
@@ -188,20 +191,22 @@ fn run(
             if config.poll() {
                 if old.output != config.current.output {
                     host = host::open(&config.current)?;
-                    pet.on_drag();
+                    pet.on_drag_end();
                 } else if old.scale != config.current.scale {
                     host.set_scale(config.current.scale);
-                    pet.on_drag();
+                    pet.on_drag_end();
                     if let Err(e) = host.placement().save() {
                         eprintln!("save placement: {e}");
                     }
                 }
                 sheet.set_budget(config.current.cache_mib);
+                sheet.set_premultiply(config.current.premultiply);
                 sheet.invalidate();
                 dirty = true;
             }
         }
         let mut reopen = false;
+        let was_dragging = host.dragging();
         for event in host.poll_events() {
             match event {
                 AppEvent::Click(button) => {
@@ -221,7 +226,6 @@ fn run(
                     }
                 }
                 AppEvent::Dragged => {
-                    pet.on_drag();
                     if let Err(e) = host.placement().save() {
                         eprintln!("save placement: {e}");
                     }
@@ -233,9 +237,20 @@ fn run(
                 AppEvent::Disconnected => return Err("Wayland connection lost".into()),
             }
         }
+        // AppEvent::Dragged only fires on release, so drive the drag clip
+        // from the pointer-down edge instead.
+        let now_dragging = host.dragging();
+        if now_dragging != was_dragging {
+            if now_dragging {
+                pet.on_drag();
+            } else {
+                pet.on_drag_end();
+            }
+            dirty = true;
+        }
         if reopen {
             host = host::open(&config.current)?;
-            pet.on_drag();
+            pet.on_drag_end();
             dirty = true;
         }
         children.retain_mut(|c| matches!(c.try_wait(), Ok(None)));

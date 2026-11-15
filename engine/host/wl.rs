@@ -60,11 +60,12 @@ struct Inner {
     qh: QueueHandle<Inner>,
 }
 
-fn logical_window(scale: f64) -> (i32, i32) {
-    // A stable logical size: 100% matches the old physical size on a 150% desktop.
+fn logical_window(scale: f64, output_scale: f64) -> (i32, i32) {
+    // Divide by the compositor's real scale; it multiplies back by the same
+    // number, so one buffer pixel lands on one output pixel.
     (
-        (WINDOW_W as f64 * scale / 1.5).round().max(1.0) as i32,
-        (WINDOW_H as f64 * scale / 1.5).round().max(1.0) as i32,
+        (WINDOW_W as f64 * scale / output_scale).round().max(1.0) as i32,
+        (WINDOW_H as f64 * scale / output_scale).round().max(1.0) as i32,
     )
 }
 
@@ -104,20 +105,16 @@ impl Inner {
         ((w as f64 / s).floor() as i32, (h as f64 / s).floor() as i32)
     }
     fn logical_window(&self) -> (i32, i32) {
-        logical_window(self.scale)
+        logical_window(self.scale, self.output_scale())
     }
+    /// The canvas is drawn at 652x372; at 100% the buffer matches it exactly,
+    /// so `present` never resamples. Any resample re-interpolates the alpha
+    /// edge every frame and shows up as speckle on the white areas.
     fn buffer_size(&self) -> (u32, u32) {
-        let s = self.output_scale();
-        if self.viewport.is_some() {
-            (
-                (WINDOW_W as f64 * self.scale * s / 1.5).round().max(1.0) as u32,
-                (WINDOW_H as f64 * self.scale * s / 1.5).round().max(1.0) as u32,
-            )
-        } else {
-            let (w, h) = self.logical_window();
-            let s = s.ceil() as u32;
-            (w as u32 * s, h as u32 * s)
-        }
+        (
+            (WINDOW_W as f64 * self.scale).round().max(1.0) as u32,
+            (WINDOW_H as f64 * self.scale).round().max(1.0) as u32,
+        )
     }
     fn apply_geometry(&mut self) {
         let window = self.logical_window();
@@ -341,8 +338,9 @@ impl Host for WlHost {
         slot.busy = true;
         let surface = self.inner.surface.as_ref().unwrap();
         surface.attach(Some(&slot.buffer), 0, 0);
-        let (w, h) = self.inner.logical_window();
-        surface.damage(0, 0, w, h);
+        // Buffer coordinates: with a viewport the surface is smaller than the
+        // buffer, and surface damage would leave the rest stale.
+        surface.damage_buffer(0, 0, size.0 as i32, size.1 as i32);
         surface.commit();
         self.inner.geometry_dirty = false;
         self.conn.flush().map_err(|e| e.to_string())?;
@@ -678,8 +676,9 @@ mod tests {
     }
     #[test]
     fn size_is_logical_and_does_not_depend_on_monitor_dpi() {
-        assert_eq!(logical_window(1.0), (435, 248));
-        assert_eq!(logical_window(0.5), (217, 124));
+        assert_eq!(logical_window(1.0, 1.75), (373, 213));
+        assert_eq!(logical_window(0.5, 1.75), (186, 106));
+        assert_eq!(logical_window(1.0, 1.5), (435, 248));
     }
     #[test]
     fn restore_outside_smaller_monitor_stays_on_screen() {

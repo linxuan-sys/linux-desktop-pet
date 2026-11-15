@@ -192,7 +192,7 @@ pub fn prepare_assets(media: &Path, verify_existing: bool) -> Result<(), String>
         config.lossless = 1;
         config.method = 4;
         config.quality = 50.0;
-        config.exact = 0; // Transparent RGB is invisible; alpha stays lossless.
+        config.exact = 1; // Keep the source RGB exactly: exact=0 rewrites it.
         config.alpha_compression = 0;
         config.alpha_filtering = 0;
         let encoded = webp::Encoder::new(
@@ -479,7 +479,7 @@ impl Anim {
         }
         Ok(Self { image, meta })
     }
-    fn draw(&self, index: u32, mirror: bool, shift: i32, canvas: &mut Canvas) {
+    fn draw(&self, index: u32, mirror: bool, shift: i32, do_premul: bool, canvas: &mut Canvas) {
         canvas.buf.fill(0);
         let frame = &self.meta.frames[index as usize];
         for y in 0..frame.height {
@@ -496,11 +496,16 @@ impl Anim {
                     continue;
                 }
                 let offset = (dy * canvas.width + dx as u32) as usize * 4;
-                canvas.buf[offset..offset + 4].copy_from_slice(&premultiply(p));
+                if p[3] == 0 {
+                    continue;
+                }
+                let out = if do_premul { premultiply(p) } else { p };
+                canvas.buf[offset..offset + 4].copy_from_slice(&out);
             }
         }
     }
 }
+/// Straight alpha in, premultiplied out, rounded.
 pub fn premultiply(p: [u8; 4]) -> [u8; 4] {
     let a = p[3] as u16;
     [
@@ -510,6 +515,7 @@ pub fn premultiply(p: [u8; 4]) -> [u8; 4] {
         p[3],
     ]
 }
+
 pub struct Canvas {
     pub width: u32,
     pub height: u32,
@@ -553,6 +559,8 @@ pub struct Sheet {
     budget: usize,
     happy: String,
     last: Option<(String, u32, bool, i32)>,
+    /// Whether pixels are premultiplied on the way into the buffer.
+    premultiply: bool,
 }
 impl Sheet {
     pub fn load(media: &Path, budget_mib: usize) -> Result<Self, String> {
@@ -585,11 +593,21 @@ impl Sheet {
             budget: budget_mib * 1048576,
             happy: crate::character::pose_anim("happy").unwrap().into(),
             last: None,
+            premultiply: true,
         })
     }
     pub fn invalidate(&mut self) {
         self.last = None;
     }
+    /// Toggle premultiplication. Off keeps the authored colours exactly, at
+    /// the cost of the compositor mixing alpha twice on semi-transparent edges.
+    pub fn set_premultiply(&mut self, on: bool) {
+        if self.premultiply != on {
+            self.premultiply = on;
+            self.last = None;
+        }
+    }
+
     pub fn set_budget(&mut self, mib: usize) {
         self.budget = mib * 1048576;
         let reserved = self
@@ -690,7 +708,7 @@ impl Sheet {
         if self.last.as_ref() == Some(&key) {
             return false;
         }
-        anim.draw(index, mirror, shift, canvas);
+        anim.draw(index, mirror, shift, self.premultiply, canvas);
         self.last = Some(key);
         true
     }
@@ -946,7 +964,7 @@ mod tests {
         }
         let mut canvas = Canvas::new(WINDOW_W, WINDOW_H);
         for index in 0..120 {
-            anim.draw(index, false, 0, &mut canvas);
+            anim.draw(index, false, 0, true, &mut canvas);
             assert!(
                 canvas
                     .buf
@@ -1154,7 +1172,7 @@ mod tests {
             meta: m,
         };
         let mut c = Canvas::new(WINDOW_W, WINDOW_H);
-        a.draw(119, true, 0, &mut c);
+        a.draw(119, true, 0, true, &mut c);
         let offset = ((56 * WINDOW_W + 445) * 4) as usize;
         assert_eq!(&c.buf[offset..offset + 4], &[128, 50, 0, 128]);
         assert_eq!(
