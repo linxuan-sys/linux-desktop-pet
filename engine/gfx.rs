@@ -295,6 +295,96 @@ fn verify_crop(original: &RgbaImage, cropped: &RgbaImage, m: &Metadata) -> Resul
     }
     Ok(())
 }
+/// A cleaned public asset already includes the Codex repairs. Legacy media
+/// without a status marker still needs the runtime compatibility fixes.
+fn cleaned_assets(dir: &Path) -> Result<bool, String> {
+    let path = dir
+        .parent()
+        .ok_or("optimized directory has no media parent")?
+        .join("ASSETS.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    #[derive(Deserialize)]
+    struct Status {
+        status: String,
+    }
+    let status: Status =
+        serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
+    match status.status.as_str() {
+        "cleaned" => Ok(true),
+        "raw" => Ok(false),
+        _ => Err(format!("{}: unsupported asset status", path.display())),
+    }
+}
+
+/// Restore only the largest visible body's interior. Keep the exterior AA
+/// band, real transparent holes, detached effects and all original RGB.
+fn repair_body_matte(image: &mut RgbaImage, frame: &FrameMeta) {
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    if w < 5 || h < 5 {
+        return;
+    }
+    let alpha: Vec<u8> = (0..w * h)
+        .map(|pos| {
+            image.get_pixel(
+                frame.atlas_x + (pos % w) as u32,
+                frame.atlas_y + (pos / w) as u32,
+            )[3]
+        })
+        .collect();
+    if alpha.iter().all(|&a| a == 0 || a == 255) {
+        return;
+    }
+    let mut seen = vec![false; w * h];
+    let mut body = Vec::new();
+    let mut region = Vec::new();
+    for start in 0..w * h {
+        if seen[start] || alpha[start] == 0 {
+            continue;
+        }
+        region.clear();
+        region.push(start);
+        seen[start] = true;
+        let mut cursor = 0;
+        while cursor < region.len() {
+            let pos = region[cursor];
+            cursor += 1;
+            let (x, y) = ((pos % w) as i32, (pos / w) as i32);
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                        continue;
+                    }
+                    let next = ny as usize * w + nx as usize;
+                    if alpha[next] != 0 && !seen[next] {
+                        seen[next] = true;
+                        region.push(next);
+                    }
+                }
+            }
+        }
+        if region.len() > body.len() {
+            std::mem::swap(&mut body, &mut region);
+        }
+    }
+    for pos in body {
+        if alpha[pos] == 255 {
+            continue;
+        }
+        let (x, y) = (pos % w, pos / w);
+        if x < 2 || y < 2 || x + 2 >= w || y + 2 >= h {
+            continue;
+        }
+        if (y - 2..=y + 2).all(|ny| (x - 2..=x + 2).all(|nx| alpha[ny * w + nx] != 0)) {
+            image.get_pixel_mut(frame.atlas_x + x as u32, frame.atlas_y + y as u32)[3] = 255;
+        }
+    }
+}
+
 struct Anim {
     image: RgbaImage,
     meta: Metadata,
@@ -309,7 +399,13 @@ impl Anim {
                 "{name}: crop dimensions do not match metadata; run --prepare-assets"
             ));
         }
-        let image = read_image(&path)?;
+        let mut image = read_image(&path)?;
+        let needs_codex_repairs = env!("CARGO_PKG_NAME") == "codex-girl" && !cleaned_assets(dir)?;
+        if needs_codex_repairs {
+            for frame in &meta.frames {
+                repair_body_matte(&mut image, frame);
+            }
+        }
         Ok(Self { image, meta })
     }
     fn draw(&self, index: u32, mirror: bool, shift: i32, canvas: &mut Canvas) {
@@ -569,6 +665,153 @@ mod tests {
         }
         dir
     }
+    #[test]
+    fn body_matte_patches_are_opaque_but_edges_and_holes_stay_transparent() {
+        let mut im = RgbaImage::from_pixel(9, 9, image::Rgba([240, 230, 245, 255]));
+        im.put_pixel(4, 4, image::Rgba([240, 230, 245, 214]));
+        im.put_pixel(5, 4, image::Rgba([240, 230, 245, 93]));
+        im.put_pixel(0, 3, image::Rgba([240, 230, 245, 93]));
+        im.put_pixel(1, 7, image::Rgba([240, 230, 245, 0]));
+        im.put_pixel(2, 7, image::Rgba([240, 230, 245, 93]));
+        let frame = FrameMeta {
+            x: 0,
+            y: 0,
+            width: 9,
+            height: 9,
+            atlas_x: 0,
+            atlas_y: 0,
+        };
+        repair_body_matte(&mut im, &frame);
+        assert_eq!(im.get_pixel(4, 4).0, [240, 230, 245, 255]);
+        assert_eq!(im.get_pixel(5, 4)[3], 255);
+        assert_eq!(im.get_pixel(0, 3)[3], 93);
+        assert_eq!(im.get_pixel(1, 7)[3], 0);
+        assert_eq!(im.get_pixel(2, 7)[3], 93);
+    }
+
+    #[test]
+    fn detached_translucent_effect_is_not_made_opaque() {
+        let mut im = RgbaImage::new(24, 12);
+        for y in 1..11 {
+            for x in 1..11 {
+                im.put_pixel(x, y, image::Rgba([200, 180, 160, 255]));
+            }
+        }
+        for y in 2..9 {
+            for x in 16..23 {
+                im.put_pixel(x, y, image::Rgba([255, 255, 255, 93]));
+            }
+        }
+        im.put_pixel(5, 5, image::Rgba([200, 180, 160, 93]));
+        let f = FrameMeta {
+            x: 0,
+            y: 0,
+            width: 24,
+            height: 12,
+            atlas_x: 0,
+            atlas_y: 0,
+        };
+        repair_body_matte(&mut im, &f);
+        assert_eq!(im.get_pixel(5, 5)[3], 255);
+        assert_eq!(im.get_pixel(19, 5)[3], 93);
+    }
+
+    fn matte_fixture() -> (tempfile::TempDir, Metadata, RgbaImage) {
+        let dir = library();
+        let mut meta = load_metadata(dir.path(), "a").unwrap();
+        meta.atlas_width = 15 * 120;
+        meta.atlas_height = 15;
+        let mut image = RgbaImage::new(meta.atlas_width, meta.atlas_height);
+        for (index, frame) in meta.frames.iter_mut().enumerate() {
+            *frame = FrameMeta {
+                x: 0,
+                y: 0,
+                width: 15,
+                height: 15,
+                atlas_x: index as u32 * 15,
+                atlas_y: 0,
+            };
+            for y in 3..12 {
+                for x in 3..12 {
+                    let alpha = if y == 3 {
+                        44
+                    } else if (6..9).contains(&x) && (6..9).contains(&y) {
+                        93
+                    } else {
+                        255
+                    };
+                    image.put_pixel(frame.atlas_x + x, y, image::Rgba([50, 65, 120, alpha]));
+                }
+            }
+        }
+        image.save(dir.path().join("optimized/a.webp")).unwrap();
+        std::fs::write(
+            dir.path().join("optimized/a.json"),
+            serde_json::to_vec(&meta).unwrap(),
+        )
+        .unwrap();
+        (dir, meta, image)
+    }
+
+    #[test]
+    fn codex_raw_matte_repairs_interiors_but_preserves_edges() {
+        if env!("CARGO_PKG_NAME") != "codex-girl" {
+            return;
+        }
+        let (dir, meta, _) = matte_fixture();
+        let anim = Anim::decode(&dir.path().join("optimized"), "a", meta).unwrap();
+        assert_eq!(anim.image.get_pixel(7, 7)[3], 255);
+        assert_eq!(anim.image.get_pixel(7, 3)[3], 44);
+        assert_eq!(anim.image.get_pixel(0, 0)[3], 0);
+    }
+
+    #[test]
+    fn cleaned_assets_are_not_repaired_again() {
+        let (dir, meta, image) = matte_fixture();
+        std::fs::write(dir.path().join("ASSETS.json"), r#"{"status":"cleaned"}"#).unwrap();
+        let anim = Anim::decode(&dir.path().join("optimized"), "a", meta).unwrap();
+        assert_eq!(anim.image, image);
+    }
+
+    #[test]
+    fn invalid_asset_status_does_not_trigger_codex_repairs() {
+        let (dir, meta, _) = matte_fixture();
+        std::fs::write(dir.path().join("ASSETS.json"), "{broken").unwrap();
+        let result = Anim::decode(&dir.path().join("optimized"), "a", meta);
+        assert_eq!(result.is_err(), env!("CARGO_PKG_NAME") == "codex-girl");
+    }
+
+    #[test]
+    #[ignore = "requires repository Codex assets"]
+    fn codex_running_hair_does_not_show_the_desktop_through_matte_patches() {
+        if env!("CARGO_PKG_NAME") != "codex-girl" {
+            return;
+        }
+        let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("media");
+        let meta = load_metadata(&media, "奔跑").unwrap();
+        let anim = Anim::decode(&media.join("optimized"), "奔跑", meta).unwrap();
+        let frame = &anim.meta.frames[15];
+        for (x, y) in [(240, 72), (260, 95)] {
+            assert_eq!(
+                anim.image
+                    .get_pixel(frame.atlas_x + x - frame.x, frame.atlas_y + y - frame.y)[3],
+                255
+            );
+        }
+        let mut canvas = Canvas::new(WINDOW_W, WINDOW_H);
+        for index in 0..120 {
+            anim.draw(index, false, 0, &mut canvas);
+            assert!(
+                canvas
+                    .buf
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|p| p[..3].iter().all(|v| *v <= p[3]))
+            );
+        }
+    }
+
     fn await_clip(sheet: &mut Sheet, name: &str) {
         let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while !sheet.ready(name) {
