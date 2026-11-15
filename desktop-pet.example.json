@@ -1,0 +1,37 @@
+{
+  "pets": {
+    "claude-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty claude"
+      }
+    },
+    "dsh-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty dsh-tui"
+      }
+    },
+    "codex-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": false,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty codex"
+      }
+    }
+  }
+}

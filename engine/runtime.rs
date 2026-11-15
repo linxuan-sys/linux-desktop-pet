@@ -100,7 +100,8 @@ fn entry() -> Result<(), String> {
         return gfx::prepare_assets(&media, force);
     }
     let watcher = settings::Watcher::new()?;
-    let sheet = Sheet::load(&media, watcher.current.cache_mib)?;
+    let mut sheet = Sheet::load(&media, watcher.current.cache_mib)?;
+    sheet.set_premultiply(watcher.current.premultiply);
     let (tx, rx) = channel();
     spawn_sensor_threads(&tx);
     run(watcher, sheet, rx)
@@ -197,6 +198,7 @@ fn run(
                     }
                 }
                 sheet.set_budget(config.current.cache_mib);
+                sheet.set_premultiply(config.current.premultiply);
                 sheet.invalidate();
                 dirty = true;
             }

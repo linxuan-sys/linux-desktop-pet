@@ -81,68 +81,91 @@ sudo pacman -S --needed rust pkg-config wayland wayland-protocols
 
 ### Build
 
-Build all three from the collection root:
+The three pets share one engine (`engine/`) through a Cargo workspace, so a
+single command at the repository root builds all of them:
 
 ```bash
-cd /home/LinXuan/.local/opt/linux-desktop-pet
-for pet in claude-girl dsh-girl codex-girl; do
-  cargo build --release --manifest-path "$pet/Cargo.toml"
-done
+cd ~/.local/opt/linux-desktop-pet
+cargo build --release
 ```
 
-Or build one at a time:
-
-```bash
-cd claude-girl && cargo build --release
-cd dsh-girl && cargo build --release
-cd codex-girl && cargo build --release
-```
-
-The binaries are written to:
+The binaries are written to one shared target directory:
 
 ```text
-claude-girl/target/release/claude-girl
-dsh-girl/target/release/dsh-girl
-codex-girl/target/release/codex-girl
+target/release/claude-girl
+target/release/dsh-girl
+target/release/codex-girl
 ```
+
+### Prepare the animation cache (required, once per asset set)
+
+The renderer reads pre-cropped atlases from `<pet>/media/optimized/`, which is
+generated from `<pet>/media/anim/`. That directory is not in git, so it must be
+built once after cloning:
+
+```bash
+pet claude prepare
+pet dsh prepare
+pet codex prepare
+```
+
+Or without the launcher:
+
+```bash
+./target/release/claude-girl --media-dir claude-girl/media --prepare-assets
+./target/release/dsh-girl    --media-dir dsh-girl/media    --prepare-assets
+./target/release/codex-girl  --media-dir codex-girl/media  --prepare-assets
+```
+
+This takes a few minutes per pet (166 / 101 / 90 sheets). It is idempotent:
+sheets that are already up to date are skipped, so an interrupted run can simply
+be restarted. Expect roughly 3.5 GB of output because the atlases are encoded
+losslessly.
 
 ### Run
 
-Run one pet from its own project directory, so it can find its local config and media:
+The launcher is the easy path — it passes the media directory and stops the
+process if it is already running:
 
 ```bash
-cd claude-girl
-./target/release/claude-girl
+pet claude
+pet dsh
+pet codex
 ```
 
-Run all three together in the background. This fish version detaches each process with `setsid`, so you can close the terminal immediately:
+Without the launcher, point the binary at its media directory explicitly:
+
+```bash
+./target/release/claude-girl --media-dir claude-girl/media
+```
+
+Running one pet per terminal is fine. To start all three detached (fish):
 
 ```fish
-for p in codex-girl claude-girl dsh-girl; pkill -x $p 2>/dev/null; env -C /home/LinXuan/.local/opt/linux-desktop-pet/$p setsid -f ./target/release/$p </dev/null >/dev/null 2>&1; end
+for p in codex-girl claude-girl dsh-girl
+    pkill -x $p 2>/dev/null
+    env -C ~/.local/opt/linux-desktop-pet setsid -f ./target/release/$p --media-dir $p/media </dev/null >/dev/null 2>&1
+end
 ```
 
-The same command for bash:
-
-```bash
-for p in codex-girl claude-girl dsh-girl; do
-  pkill -x "$p" 2>/dev/null
-  (cd "/home/LinXuan/.local/opt/linux-desktop-pet/$p" && setsid -f "./target/release/$p" </dev/null >/dev/null 2>&1)
-done
-```
-
-Check that all three are alive:
+Check they are alive, and stop them:
 
 ```bash
 pgrep -a -x 'codex-girl|claude-girl|dsh-girl'
-```
-
-Stop all three:
-
-```bash
 pkill -x 'codex-girl|claude-girl|dsh-girl'
 ```
 
-Three pets on one screen may overlap. That is expected; they are independent windows.
+The launcher staggers the three along the bottom-right corner when more than one
+is running; a single pet parks at the very edge.
+
+### Resize at runtime
+
+```bash
+pet codex size 120
+```
+
+`50`–`150` percent. The value is saved to the config file and applied to a
+running pet within half a second.
 
 ### Deploy the launcher (recommended)
 
@@ -172,12 +195,12 @@ mkdir -p ~/.local/opt ~/.local/bin && git clone YOUR_REPO_URL ~/.local/opt/linux
 
 The `pet` file in the repository is the source copy. Edit that one and reinstall it; do not edit `~/.local/bin/pet` directly.
 
-Build the three binaries once (these commands work in fish and bash), then start or stop each pet by name:
+Build once at the repository root, prepare the assets once, then use the launcher:
 
 ```bash
-cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/claude-girl/Cargo.toml"
-cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/dsh-girl/Cargo.toml"
-cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/codex-girl/Cargo.toml"
+cd ~/.local/opt/linux-desktop-pet
+cargo build --release
+pet claude prepare && pet dsh prepare && pet codex prepare
 ```
 
 ```bash
@@ -243,18 +266,35 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 # usually ~/.config/desktop-pet/desktop-pet.json
 ```
 
-The file has one `click` block per pet:
+The file is **not created automatically**. Without it every pet runs on its
+built-in defaults. A ready-to-edit template ships in the repository root:
+
+```bash
+mkdir -p ~/.config/desktop-pet
+cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
+```
+
+`pet <name> size <percent>` also creates the file if it is missing.
+
+Each pet has its own section:
 
 ```json
 {
   "pets": {
     "claude-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
     },
     "dsh-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
       "click": { "left": "", "middle": "kitty", "right": "kitty dsh-tui" }
     },
     "codex-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
       "click": { "left": "", "middle": "kitty", "right": "kitty codex" }
     }
   }
@@ -265,26 +305,52 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `scale` | `1.0` | Size multiplier, `0.5`–`1.5`. `1.0` draws one buffer pixel per canvas pixel, i.e. no resampling. |
+| `cache_mib` | `128` | Decoded-atlas budget in MiB, `128`–`512`. One atlas is roughly 25–70 MiB, so 384 holds about ten clips. |
+| `output` | `null` | Connector name to pin the pet to, e.g. `"DP-1"`. `null` follows the compositor. |
+| `premultiply` | per pet | Premultiply alpha before writing to the shared buffer. Wayland's `Argb8888` is a premultiplied format, so `true` is correct. Codex Girl defaults to `false` because her sheets carry heavy green-screen residue in the antialiased edge, which premultiplication turns into dark speckle. |
 | `click.left` | `""` | Left-click command. Empty means no command; the click still plays the happy reaction. |
 | `click.middle` | `kitty` | Middle-click command. |
 | `click.right` | per pet | `kitty claude` for Claude Girl, `kitty dsh-tui` for DSH Girl, `kitty codex` for Codex Girl. |
 
-Polling intervals are fixed in the binary: system state every 2.5 s, render tick every 33 ms.
+The file is polled every 500 ms and applied without restarting. Invalid values
+are rejected and the last good configuration stays in effect. Window position is
+remembered across restarts in a separate state file.
 
-Commands are split on whitespace and spawned directly, without a shell. If you need pipes or quoting, point the config at a small wrapper script. Click commands are debounced for 1200 ms, so a burst of clicks cannot open a terminal swarm. The file is read at startup; restart the pet after editing.
+Polling intervals are fixed in the binary: system state every 2.5 s, render tick
+every 16 ms (62.5 Hz). The renderer only presents when the frame actually
+changes, so the higher tick rate costs nothing while a 12 fps clip is playing.
+
+Commands are split on whitespace and spawned directly, without a shell. If you need pipes or quoting, point the config at a small wrapper script. Click commands are debounced for 1200 ms, so a burst of clicks cannot open a terminal swarm.
 
 ### How it works
 
 ```text
-sensors (2.5 s) ──► DerivedState ──► Pet state machine ──► pose ──► renderer (33 ms)
+sensors (2.5 s) ──► DerivedState ──► Pet state machine ──► pose ──► renderer (16 ms)
 focus socket ─────► SharedCache ───┘
 clipboard ────────► reaction ──────┘
 ```
 
-- **Sensors.** A background thread polls focused window, MPRIS playback, battery and hour every 2.5 seconds. A compositor-specific thread streams focus events into a shared cache.
-- **Pet engine.** Each pose is locked for a complete 10-second clip. A click interrupts immediately; charging, copy and other reactions wait for the current clip to finish. The awake routine is seven steps: idle, idle, random, idle, idle, random, walk.
-- **Walking.** The window is stationary before and after the run window, interpolates its position during the run, and clamps at the screen edges; at an edge the window stops and the clip runs in place.
-- **Renderer.** `Sheet` loads WebP sprite sheets lazily, keeps a small LRU cache, pins the click-happy sheet, and blits one 640×360 frame into the shared-memory buffer. The layer surface stays transparent; the input region follows the visible pixels.
+- **Sensors.** A background thread polls the focused window, MPRIS playback,
+  battery and hour every 2.5 seconds. A compositor-specific thread streams focus
+  events into a shared cache.
+- **Pet engine.** Each pose is locked for a complete 10-second clip. A click and
+  a clipboard copy interrupt immediately; charging and other reactions wait for
+  the current clip to finish. Music has top priority, then the midnight
+  yawn/sleep alternation, then the mode schedule.
+- **Modes.** With a terminal focused the pet runs a fixed 50-second loop: idle,
+  idle, typing, idle, music. Otherwise it follows the seven-step awake routine:
+  idle, idle, random, idle, idle, random, walk.
+- **Walking.** The window is stationary before and after the run window,
+  interpolates its position during the run, and clamps at the screen edges; at an
+  edge the window stops and the clip runs in place.
+- **Renderer.** `prepare_assets` crops every one of the 120 cells to its own
+  alpha bounding box and shelf-packs the crops into one atlas, cutting a 105 MiB
+  sheet to roughly 35 MiB. At runtime `Sheet` decodes atlases on a dedicated
+  thread, evicts by byte budget, and writes the current frame straight into the
+  shared-memory buffer as premultiplied-free BGRA. Frames are double-buffered and
+  released back by `wl_buffer.release`. The layer surface stays transparent; the
+  input region follows the visible pixels.
 
 ### Animation format
 
@@ -318,30 +384,40 @@ To add a random animation, put a new WebP in `media/anim/` and add its filename 
 
 ```text
 linux-desktop-pet/
-├── README.md                 this document
-├── LICENSE                   MIT license for the code
-├── .gitignore                build artifacts and legacy configs
-├── pet                       one-file start/stop launcher
-├── docs/
-│   └── poster.png            trio poster (4:3)
+├── Cargo.toml                workspace: three crates, one shared engine
+├── engine/                   shared by all three pets
+│   ├── gfx.rs                atlas crop/pack, decode thread, byte-budget LRU, blit
+│   ├── runtime.rs            main loop, config hot-reload, signal plumbing
+│   ├── settings.rs           config parse, atomic write, placement persistence
+│   ├── host/
+│   │   ├── mod.rs            Host trait, input regions, RGBA→BGRA
+│   │   └── wl.rs             layer-shell surface, double buffering, scaling
+│   └── sensors/              focus (niri/Hyprland), MPRIS, battery, clipboard
 ├── claude-girl/
 │   ├── src/
-│   │   ├── main.rs           entry point, sensor threads, main loop
-│   │   ├── pet.rs            pose scheduler and state machine
-│   │   ├── gfx.rs            WebP sheet loader and compositor
-│   │   ├── host/             Wayland layer-shell host
-│   │   └── sensors/          focus, MPRIS, battery, clipboard
-│   ├── media/anim/           166 WebP animation sheets
-│   ├── docs/poster.png
-│   ├── README.md
-│   └── LICENSE
+│   │   ├── main.rs           8 lines: points at ../../engine
+│   │   ├── character.rs      pose → animation filename
+│   │   └── pet.rs            state machine (the only pet-specific logic)
+│   └── media/
+│       ├── anim/             166 source WebP sheets (in git)
+│       └── optimized/        generated atlases + json (git-ignored)
 ├── dsh-girl/                 same layout, 101 animations
-└── codex-girl/               same layout, 90 animations
+├── codex-girl/               same layout, 90 animations
+├── docs/poster.png
+├── pet                       launcher: start/stop/size/prepare
+├── desktop-pet.example.json  config template — copy to ~/.config/desktop-pet/
+├── LICENSE
+└── README.md
 ```
+
+Adding a fourth character means one new crate with three files — `main.rs`,
+`character.rs` and `pet.rs` — plus its media directory. No engine changes.
 
 ### Troubleshooting
 
-- **`no media/anim directory`** — run the binary from its project directory, or install `media/` into `~/.local/share/<pet>/media`.
+- **`no media/optimized/... ; run --prepare-assets`** — the cropped atlas cache is missing. Run `pet <name> prepare` (a few minutes per pet).
+- **`no media/anim directory`** — pass `--media-dir <pet>/media`, or install `media/` into `~/.local/share/<pet>/media`.
+- **The pet is 17% smaller than before** — `scale: 1.0` is one buffer pixel per canvas pixel, i.e. no resampling. The old default drew 761 physical pixels where 652 is exact; set `scale` to `1.17` to match that size.
 - **The pet is invisible or the layer never appears** — check that you are on Wayland and that your compositor supports `zwlr_layer_shell_v1`. niri and Hyprland are the tested targets.
 - **Nothing happens under X11** — X11 is not supported. This is a Wayland-native application.
 - **Focus reactions do not fire** — focus detection is implemented for niri and Hyprland. Other compositors fall back to no focus information.
@@ -426,68 +502,82 @@ sudo pacman -S --needed rust pkg-config wayland wayland-protocols
 
 ### 编译
 
-在集合根目录一次编译三只：
+三只桌宠通过 Cargo workspace 共用同一份引擎（`engine/`），所以在仓库根目录一条命令就能全部编译：
 
 ```bash
-cd /home/LinXuan/.local/opt/linux-desktop-pet
-for pet in claude-girl dsh-girl codex-girl; do
-  cargo build --release --manifest-path "$pet/Cargo.toml"
-done
+cd ~/.local/opt/linux-desktop-pet
+cargo build --release
 ```
 
-或者单独编译：
-
-```bash
-cd claude-girl && cargo build --release
-cd dsh-girl && cargo build --release
-cd codex-girl && cargo build --release
-```
-
-产物位置：
+产物在同一个 target 目录下：
 
 ```text
-claude-girl/target/release/claude-girl
-dsh-girl/target/release/dsh-girl
-codex-girl/target/release/codex-girl
+target/release/claude-girl
+target/release/dsh-girl
+target/release/codex-girl
 ```
+
+### 生成素材缓存（必须，每套素材跑一次）
+
+渲染器读的是 `<pet>/media/optimized/` 里的裁剪图集，它由 `<pet>/media/anim/` 生成。这个目录不进 git，所以克隆后必须生成一次：
+
+```bash
+pet claude prepare
+pet dsh prepare
+pet codex prepare
+```
+
+不用启动脚本的话：
+
+```bash
+./target/release/claude-girl --media-dir claude-girl/media --prepare-assets
+./target/release/dsh-girl    --media-dir dsh-girl/media    --prepare-assets
+./target/release/codex-girl  --media-dir codex-girl/media  --prepare-assets
+```
+
+每只几分钟（166 / 101 / 90 张）。这个过程是幂等的：已经是最新的素材会直接跳过，所以中途中断了直接重跑即可。因为是无损编码，输出大约 3.5 GB。
 
 ### 运行
 
-单独运行一只时，进入它自己的项目目录，方便读取本地配置和素材：
+用启动脚本最省事——它会传好素材目录，而且已经在跑的时候再执行就是关闭：
 
 ```bash
-cd claude-girl
-./target/release/claude-girl
+pet claude
+pet dsh
+pet codex
 ```
 
-三只同时后台运行。下面这条 fish 命令用 `setsid` 脱离终端，回车后可以直接关掉终端：
+不用启动脚本的话，要显式指定素材目录：
+
+```bash
+./target/release/claude-girl --media-dir claude-girl/media
+```
+
+每只开一个终端也行。要让三只同时后台运行（fish）：
 
 ```fish
-for p in codex-girl claude-girl dsh-girl; pkill -x $p 2>/dev/null; env -C /home/LinXuan/.local/opt/linux-desktop-pet/$p setsid -f ./target/release/$p </dev/null >/dev/null 2>&1; end
+for p in codex-girl claude-girl dsh-girl
+    pkill -x $p 2>/dev/null
+    env -C ~/.local/opt/linux-desktop-pet setsid -f ./target/release/$p --media-dir $p/media </dev/null >/dev/null 2>&1
+end
 ```
 
-bash 版本：
-
-```bash
-for p in codex-girl claude-girl dsh-girl; do
-  pkill -x "$p" 2>/dev/null
-  (cd "/home/LinXuan/.local/opt/linux-desktop-pet/$p" && setsid -f "./target/release/$p" </dev/null >/dev/null 2>&1)
-done
-```
-
-确认三只都活着：
+确认存活、以及全部关闭：
 
 ```bash
 pgrep -a -x 'codex-girl|claude-girl|dsh-girl'
-```
-
-一次全关：
-
-```bash
 pkill -x 'codex-girl|claude-girl|dsh-girl'
 ```
 
-三只同屏可能会重叠，这是正常的，它们是彼此独立的窗口。
+同时开多只时，启动脚本会让它们沿右下角依次错开；只开一只时贴在屏幕最边缘。
+
+### 运行时调大小
+
+```bash
+pet codex size 120
+```
+
+`50`–`150` 百分比。这个值会写进配置文件，运行中的桌宠半秒内生效。
 
 ### 部署启动脚本（推荐）
 
@@ -517,12 +607,12 @@ mkdir -p ~/.local/opt ~/.local/bin && git clone YOUR_REPO_URL ~/.local/opt/linux
 
 仓库里的 `pet` 是源文件，以后改脚本改这一份，再重新 `install` 覆盖；不要直接改 `~/.local/bin/pet`。
 
-先编译三只（下面三条命令 fish 和 bash 都能直接用），之后就可以按名字启动或关闭：
+先在仓库根目录编译一次、生成一次素材，之后就能用启动脚本了：
 
 ```bash
-cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/claude-girl/Cargo.toml"
-cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/dsh-girl/Cargo.toml"
-cargo build --release --manifest-path "$HOME/.local/opt/linux-desktop-pet/codex-girl/Cargo.toml"
+cd ~/.local/opt/linux-desktop-pet
+cargo build --release
+pet claude prepare && pet dsh prepare && pet codex prepare
 ```
 
 ```bash
@@ -588,18 +678,34 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 # 通常是 ~/.config/desktop-pet/desktop-pet.json
 ```
 
-文件里每只桌宠有一段自己的 `click`：
+这个文件**不会自动生成**。没有它时每只桌宠都跑内置默认值。仓库根目录带了一份可直接改的模板：
+
+```bash
+mkdir -p ~/.config/desktop-pet
+cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
+```
+
+`pet <名字> size <百分比>` 在文件缺失时也会顺手创建它。
+
+每只桌宠有自己的段：
 
 ```json
 {
   "pets": {
     "claude-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
     },
     "dsh-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
       "click": { "left": "", "middle": "kitty", "right": "kitty dsh-tui" }
     },
     "codex-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
       "click": { "left": "", "middle": "kitty", "right": "kitty codex" }
     }
   }
@@ -610,26 +716,33 @@ $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
+| `scale` | `1.0` | 大小倍数，`0.5`–`1.5`。`1.0` 表示一个缓冲区像素对应一个画布像素，也就是完全不重采样。 |
+| `cache_mib` | `128` | 已解码图集的内存预算，单位 MiB，`128`–`512`。单张图集约 25–70 MiB，所以 384 大概能存十段动画。 |
+| `output` | `null` | 固定在某块屏幕上的连接器名，例如 `"DP-1"`。`null` 表示跟随合成器。 |
+| `premultiply` | 按桌宠 | 写入共享缓冲区前是否预乘 alpha。Wayland 的 `Argb8888` 是预乘格式，所以 `true` 才正确。Codex Girl 默认 `false`，因为她的素材抗锯齿边缘残留了大量绿幕，预乘会把它压成深色雪花点。 |
 | `click.left` | `""` | 左键命令。空字符串表示不启动程序，但仍然播放点击开心反应。 |
 | `click.middle` | `kitty` | 中键命令。 |
 | `click.right` | 按桌宠 | Claude Girl 是 `kitty claude`，DSH Girl 是 `kitty dsh-tui`，Codex Girl 是 `kitty codex`。 |
 
-轮询间隔固定在程序里：系统状态每 2.5 秒、渲染节拍每 33 毫秒。
+配置文件每 500 毫秒检查一次，改完不用重启就生效。非法值会被拒绝，并保持上一份有效配置。窗口位置记在单独的状态文件里，重启后恢复。
 
-命令按空白拆分后直接启动，不经过 shell。如果需要管道或引号，请把配置指向一个小包装脚本。点击命令有 1200 毫秒防抖，连续点击不会开出一堆终端。配置在启动时读取，改完要重启桌宠。
+轮询间隔固定在程序里：系统状态每 2.5 秒，渲染节拍每 16 毫秒（62.5 Hz）。渲染器只在画面真的变化时才提交，所以播 12 fps 动画时更高的节拍不产生额外开销。
+
+命令按空白拆分后直接启动，不经过 shell。如果需要管道或引号，请把配置指向一个小包装脚本。点击命令有 1200 毫秒防抖，连续点击不会开出一堆终端。
 
 ### 工作原理
 
 ```text
-传感器（2.5 秒）──► DerivedState ──► 宠物状态机 ──► 姿势 ──► 渲染器（33 毫秒）
+传感器（2.5 秒）──► DerivedState ──► 宠物状态机 ──► 姿势 ──► 渲染器（16 毫秒）
 焦点 socket ──────► SharedCache ───┘
 剪贴板 ───────────► 反应 ──────────┘
 ```
 
 - **传感器。** 后台线程每 2.5 秒轮询焦点窗口、MPRIS 播放状态、电池和小时。合成器专用线程把焦点事件写入共享缓存。
-- **宠物引擎。** 每个姿势锁定一整段 10 秒动画。点击可以立刻打断；充电、复制等反应会等当前片段播完。清醒时的日程是七步：发呆、发呆、随机、发呆、发呆、随机、走路。
+- **宠物引擎。** 每个姿势锁定一整段 10 秒动画。点击和复制剪贴板可以立刻打断；充电等反应会等当前片段播完。音乐优先级最高，其次是 0 点后的哈欠/睡觉交替，最后才是模式日程。
+- **模式。** 聚焦终端时跑固定的 50 秒循环：发呆、发呆、写代码、发呆、听音乐。否则走七步清醒日程：发呆、发呆、随机、发呆、发呆、随机、走路。
 - **走路。** 奔跑窗口之前和之后窗口保持不动，窗口期间插值移动，碰到屏幕边缘会 clamp；贴边时窗口停住，动画继续原地踏步。
-- **渲染器。** `Sheet` 按需加载 WebP 精灵图，维护一个小型 LRU 缓存，并固定点击开心素材，避免点击时等待加载。每帧把一张 640×360 的画面 blit 到共享内存缓冲区；layer 表面保持透明，输入区域跟随可见像素。
+- **渲染器。** `prepare_assets` 把 120 个单元格各自裁到自己的 alpha 包围盒，再把裁剪块紧凑打包成一张图集，一张 105 MiB 的精灵图降到约 35 MiB。运行时 `Sheet` 在独立线程上解码，按字节预算淘汰，并把当前帧直接写进共享内存缓冲区（BGRA）。双缓冲，靠 `wl_buffer.release` 归还。layer 表面保持透明，输入区域跟随可见像素。
 
 ### 动画格式
 
@@ -663,30 +776,39 @@ Codex Girl 使用同一组状态，但素材名是：`待机`、`开心`、`跳�
 
 ```text
 linux-desktop-pet/
-├── README.md                 本文档
-├── LICENSE                   代码的 MIT 许可证
-├── .gitignore                忽略编译产物和旧配置
-├── pet                       一个文件控制三只的启停脚本
-├── docs/
-│   └── poster.png            三只同框海报（4:3）
+├── Cargo.toml                workspace：三个 crate，一份共享引擎
+├── engine/                   三只共用
+│   ├── gfx.rs                图集裁剪/打包、解码线程、字节预算 LRU、绘制
+│   ├── runtime.rs            主循环、配置热重载、信号串联
+│   ├── settings.rs           配置解析、原子写入、位置持久化
+│   ├── host/
+│   │   ├── mod.rs            Host trait、输入区域、RGBA→BGRA
+│   │   └── wl.rs             layer-shell 表面、双缓冲、缩放
+│   └── sensors/              焦点（niri/Hyprland）、MPRIS、电池、剪贴板
 ├── claude-girl/
 │   ├── src/
-│   │   ├── main.rs           入口、传感器线程、主循环
-│   │   ├── pet.rs            姿势调度与状态机
-│   │   ├── gfx.rs            WebP 精灵图加载与合成
-│   │   ├── host/             Wayland layer-shell 宿主
-│   │   └── sensors/          焦点、MPRIS、电池、剪贴板
-│   ├── media/anim/           166 张 WebP 动画
-│   ├── docs/poster.png
-│   ├── README.md
-│   └── LICENSE
+│   │   ├── main.rs           8 行：指向 ../../engine
+│   │   ├── character.rs      姿势 → 动画文件名
+│   │   └── pet.rs            状态机（唯一属于这只桌宠的逻辑）
+│   └── media/
+│       ├── anim/             166 张原始 WebP 精灵图（进 git）
+│       └── optimized/        生成的图集 + json（不进 git）
 ├── dsh-girl/                 同样的结构，101 段动画
-└── codex-girl/               同样的结构，90 段动画
+├── codex-girl/               同样的结构，90 段动画
+├── docs/poster.png
+├── pet                       启动脚本：启停 / 调大小 / 生成素材
+├── desktop-pet.example.json  配置模板 —— 复制到 ~/.config/desktop-pet/
+├── LICENSE
+└── README.md
 ```
+
+想加第四只角色，只需要新建一个 crate，里面三个文件——`main.rs`、`character.rs`、`pet.rs`——再加它的素材目录，引擎完全不用改。
 
 ### 常见问题
 
-- **提示 `no media/anim directory`** — 从项目目录运行，或者把 `media/` 安装到 `~/.local/share/<pet>/media`。
+- **提示 `no media/optimized/... ; run --prepare-assets`** — 裁剪图集缓存缺失。跑 `pet <名字> prepare`（每只几分钟）。
+- **提示 `no media/anim directory`** — 用 `--media-dir <pet>/media` 指定，或者把 `media/` 安装到 `~/.local/share/<pet>/media`。
+- **桌宠比以前小了 17%** — `scale: 1.0` 是一个缓冲区像素对应一个画布像素，即完全不重采样。旧默认值是 761 物理像素而 652 才是精确值；想回到那个大小就把 `scale` 设成 `1.17`。
 - **桌宠不显示，layer 表面没出现** — 确认你在 Wayland 会话，并且合成器支持 `zwlr_layer_shell_v1`。已验证的是 niri 和 Hyprland。
 - **X11 下完全没反应** — 不支持 X11，这是原生 Wayland 应用。
 - **焦点反应不触发** — 焦点检测只实现了 niri 和 Hyprland；其他合成器会退化成没有焦点信息。

@@ -9,6 +9,11 @@ pub struct Settings {
     pub cache_mib: usize,
     pub output: Option<String>,
     pub click: [String; 3],
+    /// Premultiply alpha before writing to the shared buffer. Wayland's
+    /// Argb8888 is a premultiplied format, so `true` is the correct default;
+    /// `false` keeps the authored colours exactly and is useful when the
+    /// artwork's antialiased edges carry stray hues.
+    pub premultiply: bool,
 }
 impl Settings {
     pub fn parse(raw: &Value) -> Result<Self, String> {
@@ -42,6 +47,12 @@ impl Settings {
             Some(Value::String(v)) if !v.is_empty() => Some(v.clone()),
             _ => return Err("output must be a nonempty output name or null".into()),
         };
+        let premultiply = match section.get("premultiply") {
+            None => crate::character::DEFAULT_PREMULTIPLY,
+            Some(v) => v
+                .as_bool()
+                .ok_or("premultiply must be true or false")?,
+        };
         if let Some(click) = section.get("click") {
             if !click.is_object() {
                 return Err("click must be an object".into());
@@ -56,6 +67,7 @@ impl Settings {
             scale,
             cache_mib,
             output,
+            premultiply,
             click: crate::sensors::proc::Config::parse(raw, env!("CARGO_PKG_NAME")).click,
         })
     }
@@ -201,6 +213,20 @@ impl Placement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn premultiply_defaults_follow_the_character_and_accept_override() {
+        let d = Settings::parse(&serde_json::json!({})).unwrap();
+        assert_eq!(d.premultiply, crate::character::DEFAULT_PREMULTIPLY);
+        let v = serde_json::json!({
+            "pets": { env!("CARGO_PKG_NAME"): { "premultiply": false } }
+        });
+        assert!(!Settings::parse(&v).unwrap().premultiply);
+        let bad = serde_json::json!({
+            "pets": { env!("CARGO_PKG_NAME"): { "premultiply": "no" } }
+        });
+        assert!(Settings::parse(&bad).is_err());
+    }
+
     #[test]
     fn reject_bad_scale_and_preserve_click_defaults() {
         let mut v = serde_json::json!({});
