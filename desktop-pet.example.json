@@ -32,6 +32,28 @@
         "middle": "kitty",
         "right": "kitty codex"
       }
+    },
+    "grok-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty grok"
+      }
+    },
+    "qwen-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty qwen"
+      }
     }
   }
 }

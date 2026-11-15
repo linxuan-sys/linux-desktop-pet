@@ -13,14 +13,39 @@ fi
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/pet"
 
 usage() {
-    echo "用法: pet {claude|codex|dsh} [size 50..150|prepare]"
-    echo "  已启动时再次执行会关闭对应桌宠"
-    echo "  size: 设置大小百分比，运行中生效；prepare: 生成无损素材缓存"
+    echo "用法:"
+    echo "  pet build                       编译全部桌宠"
+    echo "  pet <名字> build                只编译该桌宠"
+    echo "  pet prepare                     为全部桌宠生成素材缓存"
+    echo "  pet {claude|codex|dsh|grok|qwen}          启停该桌宠"
+    echo "  pet <名字> size 50..150         设置大小百分比，运行中生效"
+    echo "  pet <名字> prepare              只生成该桌宠的素材缓存"
 }
 
+ALL_PETS=(claude-girl codex-girl dsh-girl grok-girl qwen-girl)
+
 case "${1:-}" in
+    build)
+        [[ $# -eq 1 ]] || { usage; exit 2; }
+        exec cargo build --release --manifest-path "$ROOT/Cargo.toml"
+        ;;
+    prepare)
+        [[ $# -eq 1 ]] || { usage; exit 2; }
+        bin="${CARGO_TARGET_DIR:-$ROOT/target}/release"
+        if [[ ! -x "$bin/claude-girl" ]]; then
+            echo "先编译: pet build" >&2
+            exit 1
+        fi
+        for n in "${ALL_PETS[@]}"; do
+            echo "=== $n ==="
+            "$bin/$n" --media-dir "$ROOT/$n/media" --prepare-assets || exit 1
+        done
+        exit 0
+        ;;
     claude) name="claude-girl" ;;
     codex)  name="codex-girl"  ;;
+    grok)   name="grok-girl"   ;;
+    qwen)   name="qwen-girl"   ;;
     dsh)    name="dsh-girl"    ;;
     *) usage; exit 2 ;;
 esac
@@ -30,11 +55,13 @@ case "$name" in
     claude-girl) slot_right=4   ;;
     dsh-girl)    slot_right=304 ;;
     codex-girl)  slot_right=604 ;;
+    grok-girl)   slot_right=904 ;;
+    qwen-girl)   slot_right=1204 ;;
     *)           slot_right=4   ;;
 esac
 # 只跑一只时贴回右下角，多只同时在线才需要错开
 others=0
-for n in claude-girl dsh-girl codex-girl; do
+for n in claude-girl dsh-girl codex-girl grok-girl qwen-girl; do
     [ "$n" = "$name" ] && continue
     pgrep -x "$n" >/dev/null 2>&1 && others=$((others + 1))
 done
@@ -48,12 +75,17 @@ if [[ ! -x "$bin" ]]; then
     exit 1
 fi
 case "${2:-}" in
+    build)
+        [[ $# -eq 2 ]] || { usage; exit 2; }
+        exec cargo build --release --manifest-path "$ROOT/Cargo.toml" -p "$name"
+        ;;
     size)
         [[ $# -eq 3 ]] || { usage; exit 2; }
         exec "$bin" --scale "$3"
         ;;
     prepare)
         [[ $# -eq 2 ]] || { usage; exit 2; }
+        [[ -x "$bin" ]] || { echo "先编译: pet build" >&2; exit 1; }
         exec "$bin" --media-dir "$ROOT/$name/media" --prepare-assets
         ;;
     "") [[ $# -eq 1 ]] || { usage; exit 2; } ;;
