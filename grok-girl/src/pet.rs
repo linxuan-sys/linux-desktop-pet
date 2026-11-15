@@ -4,10 +4,10 @@ use std::sync::OnceLock;
 // One clip is 120 frames at 12fps = 10s. Nothing switches before its clip
 // ends; the only exception is a click, which must interrupt instantly.
 const CLIP_MS: u64 = 10_000;
-/// Claude's click-response clip reaches the happy hop at 5s; start one
-/// second earlier at 4s and run the remaining 6s to the clip's end.
-pub const HAPPY_MS: u64 = 6_000;
-pub const HAPPY_SKIP_MS: u64 = 4_000;
+/// Grok Girl's click-response clip: skip to 3.0s and play to the clip's end,
+/// so the hop lasts 7.0s and never wraps past the 10s mark.
+pub const HAPPY_MS: u64 = 7_000;
+pub const HAPPY_SKIP_MS: u64 = 3_000;
 // Three 10s work clips, then one 10s music clip. 28s puts the first music
 // on the boundary after three clips; 38s = 10s music + three more clips.
 /// Terminal-focus cycle: two idle clips, typing, idle, music (50s total).
@@ -60,7 +60,7 @@ const EASTER_ACTIONS: &[&str] = &[
     "点击回应-傲娇生气", "点击回应-元气挥手", "点击回应-害羞惊讶", "点击回应-挠痒咯咯笑", "照镜子", "玩水枪",
     "玩游戏气急败坏", "用金色双马尾拍打地面", "碎碎念-对屏碎碎念", "碎碎念-擦桌碎碎念", "穿针乞巧", "舞狮头",
     "荡秋千", "萌化小幽灵", "蝴蝶蜜蜂环绕头顶开花", "螃蟹走路", "被吓一跳", "被落叶淹没",
-    "被鼠标拖拽悬空反馈", "装点圣诞树", "讨糖南瓜灯", "超大伸懒腰", "踢毽子", "轻快摇摆舞",
+"装点圣诞树", "讨糖南瓜灯", "超大伸懒腰", "踢毽子", "轻快摇摆舞",
     "骑木马",
 ];
 
@@ -68,6 +68,7 @@ const EASTER_ACTIONS: &[&str] = &[
 /// Clips that already mean a dedicated state/pose; the random pool must not
 /// steal them, or a random pick would collide with a real state.
 const SPECIAL: &[&str] = &[
+    "被鼠标拖拽悬空反馈",
     "写代码",
     "悠闲哼歌",
     "原地左转奔跑",
@@ -102,6 +103,8 @@ enum Reaction {
     Happy { start: u64 },
     Charging { start: u64 },
     Copy { start: u64 },
+    /// Held while the pointer drags the window; cleared on release.
+    Dragged,
 }
 
 #[derive(Clone, Copy)]
@@ -154,6 +157,7 @@ impl Reaction {
             Reaction::Happy { start } if now < start.saturating_add(HAPPY_MS) => Some("happy"),
             Reaction::Charging { start } if now < start.saturating_add(CLIP_MS) => Some("charging"),
             Reaction::Copy { start } if now < start.saturating_add(CLIP_MS) => Some("copy"),
+            Reaction::Dragged => Some("dragged"),
             _ => None,
         }
     }
@@ -266,8 +270,22 @@ impl Pet {
     }
 
     /// A drag physically moved the window: drop any walk in progress.
+    /// Pointer grabbed the window: highest priority, and the clip keeps
+    /// running instead of freezing while the window moves.
     pub fn on_drag(&mut self) {
         self.walk = None;
+        self.reaction = Some(Reaction::Dragged);
+    }
+
+    /// Pointer released.
+    pub fn on_drag_end(&mut self) {
+        if matches!(self.reaction, Some(Reaction::Dragged)) {
+            self.reaction = None;
+        }
+        // A drag (or a reopen/scale change) invalidates any walk in flight.
+        self.walk = None;
+        // Release ends the drag clip at once instead of playing it out.
+        self.current = None;
     }
 
     fn set_pose(&mut self, pose: &'static str, now: u64) {
@@ -342,7 +360,10 @@ impl Pet {
         if let Some(r) = &mut self.reaction {
             // copy and the click hop cut in at once; the rest wait for
             // the running clip to finish
-            let urgent = matches!(r, Reaction::Happy { .. } | Reaction::Copy { .. });
+            let urgent = matches!(
+                r,
+                Reaction::Happy { .. } | Reaction::Copy { .. } | Reaction::Dragged
+            );
             if urgent || clip_done {
                 match r {
                     Reaction::Happy { .. } => {}
@@ -351,6 +372,7 @@ impl Pet {
                             *start = now;
                         }
                     }
+                    Reaction::Dragged => {}
                 }
                 reaction_pose = r.frame(now);
             }

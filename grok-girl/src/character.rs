@@ -23,6 +23,7 @@ pub fn pose_anim(pose: &str) -> Option<&'static str> {
         "low-battery" => "工作状态-思考冒泡",
         "late-night" | "drowsy" => "哈欠连天",
         "asleep" => "原地小憩沉眠",
+        "dragged" => "被鼠标拖拽悬空反馈",
         _ => return None,
     })
 }

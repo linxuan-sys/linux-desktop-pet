@@ -125,7 +125,6 @@ const EASTER_ACTIONS: &[&str] = &[
     "袋空如洗",
     "被吓一跳",
     "被落叶淹没",
-    "被鼠标拖拽悬空反馈",
     "装点圣诞树",
     "记录",
     "超大伸懒腰",
@@ -141,6 +140,7 @@ const EASTER_ACTIONS: &[&str] = &[
 /// Clips that already mean a dedicated state/pose; the random pool must not
 /// steal them, or a random pick would collide with a real state.
 const SPECIAL: &[&str] = &[
+    "被鼠标拖拽悬空反馈",
     "写代码",
     "听音乐",
     "奔跑",
@@ -176,6 +176,8 @@ enum Reaction {
     Happy { start: u64 },
     Charging { start: u64 },
     Copy { start: u64 },
+    /// Held while the pointer drags the window; cleared on release.
+    Dragged,
 }
 
 #[derive(Clone, Copy)]
@@ -228,6 +230,7 @@ impl Reaction {
             Reaction::Happy { start } if now < start.saturating_add(HAPPY_MS) => Some("happy"),
             Reaction::Charging { start } if now < start.saturating_add(CLIP_MS) => Some("charging"),
             Reaction::Copy { start } if now < start.saturating_add(CLIP_MS) => Some("copy"),
+            Reaction::Dragged => Some("dragged"),
             _ => None,
         }
     }
@@ -340,8 +343,22 @@ impl Pet {
     }
 
     /// A drag physically moved the window: drop any walk in progress.
+    /// Pointer grabbed the window: highest priority, and the clip keeps
+    /// running instead of freezing while the window moves.
     pub fn on_drag(&mut self) {
         self.walk = None;
+        self.reaction = Some(Reaction::Dragged);
+    }
+
+    /// Pointer released.
+    pub fn on_drag_end(&mut self) {
+        if matches!(self.reaction, Some(Reaction::Dragged)) {
+            self.reaction = None;
+        }
+        // A drag (or a reopen/scale change) invalidates any walk in flight.
+        self.walk = None;
+        // Release ends the drag clip at once instead of playing it out.
+        self.current = None;
     }
 
     fn set_pose(&mut self, pose: &'static str, now: u64) {
@@ -416,7 +433,10 @@ impl Pet {
         if let Some(r) = &mut self.reaction {
             // copy and the click hop cut in at once; the rest wait for
             // the running clip to finish
-            let urgent = matches!(r, Reaction::Happy { .. } | Reaction::Copy { .. });
+            let urgent = matches!(
+                r,
+                Reaction::Happy { .. } | Reaction::Copy { .. } | Reaction::Dragged
+            );
             if urgent || clip_done {
                 match r {
                     Reaction::Happy { .. } => {}
@@ -425,6 +445,7 @@ impl Pet {
                             *start = now;
                         }
                     }
+                    Reaction::Dragged => {}
                 }
                 reaction_pose = r.frame(now);
             }
