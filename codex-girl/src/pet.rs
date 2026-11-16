@@ -525,3 +525,19 @@ impl Default for Pet {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Pet;
+
+    #[test]
+    fn drag_reaction_resolves_to_an_animation() {
+        let mut pet = Pet::new();
+        pet.on_drag();
+        let pose = pet.tick(0).expect("dragging must select a reaction");
+        assert_eq!(
+            crate::character::pose_anim(pose),
+            Some("被鼠标拖拽悬空反馈")
+        );
+    }
+}

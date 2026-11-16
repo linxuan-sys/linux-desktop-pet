@@ -3,7 +3,7 @@
 /// correct; `false` keeps the authored colours exactly and suits artwork whose
 /// antialiased edges carry green-screen residue (that shows up as dark speckle
 /// once premultiplied). Override with `premultiply` in the config file.
-pub const DEFAULT_PREMULTIPLY: bool = false;
+pub const DEFAULT_PREMULTIPLY: bool = true;
 
 const IDLE_ANIM: &str = "待机";
 const HAPPY_ANIM: &str = "开心";
