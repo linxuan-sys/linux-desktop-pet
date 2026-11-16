@@ -14,8 +14,8 @@ pub const HAPPY_SKIP_MS: u64 = 3_000;
 const ACTION_STEPS: &[&str] = &["idle", "idle", "typing", "idle", "music"];
 const LOW_BATTERY_PCT: u32 = 20;
 
-/// The run window inside the 10s clip: the window moves from 3s to 5s.
-const WALK_START_MS: u64 = 3_000;
+/// The run window inside the 10s clip: the window moves from 3.5s to 5.5s.
+const WALK_START_MS: u64 = 3_500;
 const WALK_MOVE_MS: u64 = 2_000;
 /// Window travel speed while the run is on.
 const WALK_PX_PER_SEC: i32 = 60;

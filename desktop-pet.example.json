@@ -54,6 +54,39 @@
         "middle": "kitty",
         "right": "kitty qwen"
       }
+    },
+    "gemini-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty agy"
+      }
+    },
+    "glm-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty zcode"
+      }
+    },
+    "kimi-girl": {
+      "scale": 1.0,
+      "cache_mib": 384,
+      "output": null,
+      "premultiply": true,
+      "click": {
+        "left": "",
+        "middle": "kitty",
+        "right": "kitty kimi"
+      }
     }
   }
 }

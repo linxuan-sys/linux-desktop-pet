@@ -17,12 +17,12 @@ usage() {
     echo "  pet build                       编译全部桌宠"
     echo "  pet <名字> build                只编译该桌宠"
     echo "  pet prepare                     为全部桌宠生成素材缓存"
-    echo "  pet {claude|codex|dsh|grok|qwen}          启停该桌宠"
+    echo "  pet {claude|codex|dsh|grok|qwen|gemini|glm|kimi}  启停该桌宠"
     echo "  pet <名字> size 50..150         设置大小百分比，运行中生效"
     echo "  pet <名字> prepare              只生成该桌宠的素材缓存"
 }
 
-ALL_PETS=(claude-girl codex-girl dsh-girl grok-girl qwen-girl)
+ALL_PETS=(claude-girl codex-girl dsh-girl grok-girl qwen-girl gemini-girl glm-girl kimi-girl)
 
 case "${1:-}" in
     build)
@@ -45,6 +45,9 @@ case "${1:-}" in
     claude) name="claude-girl" ;;
     codex)  name="codex-girl"  ;;
     grok)   name="grok-girl"   ;;
+    gemini) name="gemini-girl" ;;
+    glm)    name="glm-girl"    ;;
+    kimi)   name="kimi-girl"   ;;
     qwen)   name="qwen-girl"   ;;
     dsh)    name="dsh-girl"    ;;
     *) usage; exit 2 ;;
@@ -57,11 +60,14 @@ case "$name" in
     codex-girl)  slot_right=604 ;;
     grok-girl)   slot_right=904 ;;
     qwen-girl)   slot_right=1204 ;;
+    gemini-girl) slot_right=1504 ;;
+    glm-girl)    slot_right=1804 ;;
+    kimi-girl)   slot_right=2104 ;;
     *)           slot_right=4   ;;
 esac
 # 只跑一只时贴回右下角，多只同时在线才需要错开
 others=0
-for n in claude-girl dsh-girl codex-girl grok-girl qwen-girl; do
+for n in claude-girl dsh-girl codex-girl grok-girl qwen-girl gemini-girl glm-girl kimi-girl; do
     [ "$n" = "$name" ] && continue
     pgrep -x "$n" >/dev/null 2>&1 && others=$((others + 1))
 done
