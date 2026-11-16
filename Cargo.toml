@@ -1,5 +1,5 @@
 [workspace]
-members = ["claude-girl", "dsh-girl", "codex-girl", "grok-girl", "qwen-girl"]
+members = ["claude-girl", "dsh-girl", "codex-girl", "grok-girl", "qwen-girl", "gemini-girl", "glm-girl", "kimi-girl"]
 resolver = "3"
 
 [workspace.dependencies]

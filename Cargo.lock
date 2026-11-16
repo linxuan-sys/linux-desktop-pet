@@ -431,6 +431,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "gemini-girl"
+version = "3.0.0"
+dependencies = [
+ "chrono",
+ "image",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+ "webp",
+ "wl-clipboard-rs",
+ "zbus",
+]
+
+[[package]]
 name = "getrandom"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -439,6 +456,23 @@ dependencies = [
  "cfg-if",
  "libc",
  "r-efi",
+]
+
+[[package]]
+name = "glm-girl"
+version = "3.0.0"
+dependencies = [
+ "chrono",
+ "image",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+ "webp",
+ "wl-clipboard-rs",
+ "zbus",
 ]
 
 [[package]]
@@ -573,6 +607,23 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kimi-girl"
+version = "3.0.0"
+dependencies = [
+ "chrono",
+ "image",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-wlr",
+ "webp",
+ "wl-clipboard-rs",
+ "zbus",
 ]
 
 [[package]]
