@@ -13,6 +13,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 use theme::{CORAL, DIM, GOLD, GREEN, Theme};
@@ -39,7 +40,7 @@ enum Focus {
 
 struct Download {
     pet: &'static str,
-    receiver: Receiver<Result<String, String>>,
+    receiver: Receiver<Result<PathBuf, String>>,
     progress: Receiver<assets::Progress>,
     received: u64,
     total: u64,
@@ -56,10 +57,21 @@ struct App {
     download: Option<Download>,
     progress: f64,
     editing_path: Option<String>,
+    media_sources: BTreeMap<&'static str, Option<assets::MediaSource>>,
 }
 
 impl App {
     fn new() -> Self {
+        let media_sources = character::PETS
+            .iter()
+            .map(|pet| {
+                let source = assets::resolve_media_for(pet, None)
+                    .ok()
+                    .flatten()
+                    .map(|media| media.source);
+                (*pet, source)
+            })
+            .collect();
         Self {
             selected: 0,
             field: 0,
@@ -69,6 +81,7 @@ impl App {
             download: None,
             progress: 0.0,
             editing_path: None,
+            media_sources,
         }
     }
 
@@ -84,11 +97,6 @@ impl App {
             Err(error) => return Err(error.to_string()),
         };
         settings::Settings::parse_for(&raw, self.pet())
-    }
-
-    fn installed(pet: &str) -> Option<u64> {
-        let path = assets::installed(pet)?;
-        Some(directory_size(&path))
     }
 
     fn change(&mut self, amount: i32) {
@@ -158,8 +166,7 @@ impl App {
         let (sender, receiver) = mpsc::channel();
         let (progress_sender, progress) = mpsc::channel();
         std::thread::spawn(move || {
-            let result = assets::download_with_progress_for(pet, progress_sender)
-                .map(|path| path.display().to_string());
+            let result = assets::download_with_progress_for(pet, progress_sender);
             let _ = sender.send(result);
         });
         self.progress = 0.0;
@@ -180,15 +187,17 @@ impl App {
     }
 
     fn toggle(&mut self) {
-        if !control::pet_running(self.pet()) && App::installed(self.pet()).is_none() {
-            self.download(true);
-            return;
-        }
-        let result = {
-            if control::pet_running(self.pet()) {
-                control::stop_for(self.pet()).map(|_| "已发送停止信号。".into())
-            } else {
-                control::start_for(self.pet())
+        let pet = self.pet();
+        let result = if control::pet_running(pet) {
+            control::stop_for(pet).map(|_| "已发送停止信号。".into())
+        } else {
+            match assets::resolve_media_for(pet, None) {
+                Ok(Some(media)) => control::start_for_media(pet, &media.path),
+                Ok(None) => {
+                    self.download(true);
+                    return;
+                }
+                Err(error) => Err(error),
             }
         };
         self.notice = match result {
@@ -216,13 +225,17 @@ impl App {
             Ok(Ok(path)) => {
                 let pet = download.pet;
                 let start_after_download = download.start_after_download;
+                self.media_sources
+                    .insert(pet, Some(assets::MediaSource::Managed));
                 self.notice = if start_after_download {
-                    match control::start_for(pet) {
-                        Ok(message) => format!("{pet} 下载完成：{path}；{message}"),
+                    match control::start_for_media(pet, &path) {
+                        Ok(message) => {
+                            format!("{pet} 下载完成：{}；{message}", path.display())
+                        }
                         Err(error) => format!("{pet} 下载完成，但启动失败：{error}"),
                     }
                 } else {
-                    format!("{pet} 下载完成：{path}")
+                    format!("{pet} 下载完成：{}", path.display())
                 };
                 self.progress = 1.0;
                 self.download = None;
@@ -301,22 +314,6 @@ impl App {
         }
         true
     }
-}
-
-fn directory_size(path: &std::path::Path) -> u64 {
-    std::fs::read_dir(path)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| {
-            let path = entry.path();
-            if path.is_dir() {
-                directory_size(&path)
-            } else {
-                entry.metadata().map(|meta| meta.len()).unwrap_or(0)
-            }
-        })
-        .sum()
 }
 
 struct TerminalGuard;
@@ -441,27 +438,34 @@ fn draw(frame: &mut ratatui::Frame, app: &App, running: &BTreeMap<&str, bool>) {
 
 fn draw_pets(frame: &mut ratatui::Frame, area: Rect, app: &App, running: &BTreeMap<&str, bool>) {
     let items = character::PETS.iter().enumerate().map(|(index, pet)| {
-        let installed = App::installed(pet);
-        let status = if app
+        let source = app.media_sources.get(pet).copied().flatten();
+        let media_status: &str = if app
             .download
             .as_ref()
             .is_some_and(|download| download.pet == *pet)
         {
-            "下载中".into()
-        } else if let Some(bytes) = installed {
-            format!("{:.0} MiB", bytes as f64 / 1048576.0)
+            "下载中"
         } else {
-            "待下载".into()
+            match source {
+                Some(assets::MediaSource::Repository | assets::MediaSource::Explicit) => "本地仓库",
+                Some(assets::MediaSource::Managed) => "受管缓存",
+                None => "待下载",
+            }
         };
-        let running = running.get(pet).copied().unwrap_or(false);
+        let is_running = running.get(pet).copied().unwrap_or(false);
         ListItem::new(Line::from(vec![
             Span::styled(
-                format!(" {} {:<8}", if running { "●" } else { " " }, NAMES[index]),
+                format!(
+                    " {} {:<8} {:<4}",
+                    if is_running { "●" } else { "○" },
+                    NAMES[index],
+                    if is_running { "运行中" } else { "已停止" }
+                ),
                 app.theme.fg(COLORS[index]),
             ),
             Span::styled(
-                status,
-                app.theme.dim(if installed.is_some() { GREEN } else { DIM }),
+                media_status,
+                app.theme.dim(if source.is_some() { GREEN } else { DIM }),
             ),
         ]))
     });
@@ -583,7 +587,9 @@ mod tests {
         app.selected = 7;
         app.focus = Focus::Settings;
         app.field = 1;
-        let running = BTreeMap::new();
+        app.media_sources
+            .insert(character::PETS[0], Some(assets::MediaSource::Repository));
+        let running = BTreeMap::from([(character::PETS[0], true)]);
         terminal.draw(|frame| draw(frame, &app, &running)).unwrap();
         let buffer = terminal.backend().buffer();
         let content = (0..buffer.area.height)
@@ -606,6 +612,9 @@ mod tests {
             "素材目录",
             "Tab",
             "下载",
+            "运行中",
+            "已停止",
+            "本地仓库",
         ] {
             let needle = text.split_whitespace().collect::<String>();
             assert!(compact.contains(&needle), "missing {text}\n{content}");

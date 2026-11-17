@@ -16,6 +16,19 @@ pub enum Progress {
 }
 pub type ProgressSender = Sender<Progress>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaSource {
+    Explicit,
+    Repository,
+    Managed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MediaLocation {
+    pub path: PathBuf,
+    pub source: MediaSource,
+}
+
 const MAX_ARCHIVE: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_MANIFEST: u64 = 1024 * 1024;
 
@@ -135,78 +148,109 @@ impl Manifest {
     }
 }
 
-pub fn default_media() -> Result<PathBuf, String> {
-    default_media_for(crate::character::selected())
-}
-
-pub fn default_media_for(pet: &str) -> Result<PathBuf, String> {
-    Ok(pet_data(pet)?.join("media"))
-}
-
 pub fn pet_data(pet: &str) -> Result<PathBuf, String> {
     Ok(crate::settings::configured_assets_root()?.join(pet))
 }
 
-#[cfg(feature = "unified")]
-pub fn installed(pet: &str) -> Option<PathBuf> {
-    let source = source(&default_media_for(pet).ok()?).ok()?;
-    let store = pet_data(pet).ok()?.join("assets");
-    for entry in std::fs::read_dir(store).ok()?.flatten() {
-        let path = entry.path();
-        let manifest = std::fs::read(path.join(".ready.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok());
-        if manifest.is_some_and(|manifest| {
-            manifest.validate_for(&source, pet).is_ok() && manifest.available(&path)
-        }) {
-            return Some(path);
-        }
-    }
-    None
+fn has_webp(directory: &Path) -> bool {
+    std::fs::read_dir(directory).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry.file_type().is_ok_and(|kind| kind.is_file())
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("webp"))
+        })
+    })
 }
 
-pub fn ensure(media: &Path) -> Result<PathBuf, String> {
-    if io::stderr().is_terminal() {
-        let media = media.to_path_buf();
-        let (sender, progress) = channel();
-        let worker = std::thread::spawn(move || ensure_inner(&media, Some(&sender)));
-        render_cli_progress(progress);
-        return worker
-            .join()
-            .map_err(|_| "resource download worker panicked".to_string())?;
-    }
-    ensure_inner(media, None)
+fn usable_local_media(path: &Path) -> bool {
+    path.join("packed/library.json").is_file() || has_webp(&path.join("anim"))
 }
 
-fn ensure_inner(media: &Path, progress: Option<&ProgressSender>) -> Result<PathBuf, String> {
-    let config = media.join("resources.json");
-    // Explicit/local source directories retain their existing processing rules.
-    if !config.exists()
-        && (media.join("anim").is_dir() || media.join("packed/library.json").is_file())
+fn canonical_media(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn push_ancestor_candidates(candidates: &mut Vec<PathBuf>, start: &Path, pet: &str) {
+    for ancestor in start.ancestors() {
+        candidates.push(ancestor.join(pet).join("media"));
+    }
+}
+
+fn repository_candidates(pet: &str) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(directory) = exe.parent()
     {
-        return Ok(media.to_path_buf());
+        push_ancestor_candidates(&mut candidates, directory, pet);
     }
-    let source: Source = if config.exists() {
-        serde_json::from_slice(&std::fs::read(&config).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?
-    } else {
-        Source::default()
-    };
-    source.validate()?;
-    let base = source.base();
-    if !(base.starts_with("https://") || base.starts_with("http://")) {
-        return Err("resource URL must use HTTP(S)".into());
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace) = manifest_dir.parent() {
+        candidates.push(workspace.join(pet).join("media"));
     }
-    let store = pet_data(crate::character::selected())?
-        .join("assets")
-        .join(&source.tag);
-    download(
-        &source,
-        &base,
-        &store,
-        crate::character::selected(),
-        progress,
-    )
+    if let Ok(current) = std::env::current_dir() {
+        push_ancestor_candidates(&mut candidates, &current, pet);
+    }
+    let mut seen = HashSet::new();
+    candidates.retain(|candidate| seen.insert(canonical_media(candidate)));
+    candidates
+}
+
+fn managed_media_for(pet: &str) -> Option<MediaLocation> {
+    let source = Source::default();
+    source.validate().ok()?;
+    let path = pet_data(pet).ok()?.join("assets").join(&source.tag);
+    let manifest = std::fs::read(path.join(".ready.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())?;
+    (manifest.validate_for(&source, pet).is_ok() && manifest.available(&path)).then_some({
+        MediaLocation {
+            path,
+            source: MediaSource::Managed,
+        }
+    })
+}
+
+/// Resolve local media without touching the network. Explicit paths are strict:
+/// an invalid override is an error and never falls back to a different source.
+pub fn resolve_media_for(
+    pet: &str,
+    explicit: Option<&Path>,
+) -> Result<Option<MediaLocation>, String> {
+    if let Some(path) = explicit {
+        return if usable_local_media(path) {
+            Ok(Some(MediaLocation {
+                path: canonical_media(path),
+                source: MediaSource::Explicit,
+            }))
+        } else {
+            Err(format!("素材目录不可用：{}", path.display()))
+        };
+    }
+    if let Some(path) = repository_candidates(pet)
+        .into_iter()
+        .find(|candidate| usable_local_media(candidate))
+    {
+        return Ok(Some(MediaLocation {
+            path: canonical_media(&path),
+            source: MediaSource::Repository,
+        }));
+    }
+    Ok(managed_media_for(pet))
+}
+
+/// Prefer explicit and repository media, then reuse the verified managed cache,
+/// and download exactly once when no local copy exists.
+pub fn prepare_media_for(pet: &str, explicit: Option<&Path>) -> Result<MediaLocation, String> {
+    if let Some(media) = resolve_media_for(pet, explicit)? {
+        return Ok(media);
+    }
+    let path = download_for(pet)?;
+    Ok(MediaLocation {
+        path,
+        source: MediaSource::Managed,
+    })
 }
 
 fn render_cli_progress(progress: Receiver<Progress>) {
@@ -287,31 +331,33 @@ fn flush_stderr() {
     let _ = io::stderr().flush();
 }
 
-#[cfg(feature = "unified")]
-pub fn download_cli() -> Result<PathBuf, String> {
-    ensure(&default_media()?)
+pub fn download_for(pet: &str) -> Result<PathBuf, String> {
+    if io::stderr().is_terminal() {
+        let pet = pet.to_owned();
+        let (sender, progress) = channel();
+        let worker = std::thread::spawn(move || download_managed(&pet, Some(&sender)));
+        render_cli_progress(progress);
+        return worker
+            .join()
+            .map_err(|_| "resource download worker panicked".to_string())?;
+    }
+    download_managed(pet, None)
 }
 
 #[cfg(feature = "unified")]
 pub fn download_with_progress_for(pet: &str, progress: ProgressSender) -> Result<PathBuf, String> {
-    let media = default_media_for(pet)?;
-    let source = source(&media)?;
-    let base = source.base();
-    let store = pet_data(pet)?.join("assets").join(&source.tag);
-    download(&source, &base, &store, pet, Some(&progress))
+    download_managed(pet, Some(&progress))
 }
 
-#[cfg(feature = "unified")]
-fn source(media: &Path) -> Result<Source, String> {
-    let config = media.join("resources.json");
-    let source: Source = if config.exists() {
-        serde_json::from_slice(&std::fs::read(&config).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?
-    } else {
-        Source::default()
-    };
+fn download_managed(pet: &str, progress: Option<&ProgressSender>) -> Result<PathBuf, String> {
+    let source = Source::default();
     source.validate()?;
-    Ok(source)
+    let base = source.base();
+    if !(base.starts_with("https://") || base.starts_with("http://")) {
+        return Err("resource URL must use HTTP(S)".into());
+    }
+    let store = pet_data(pet)?.join("assets").join(&source.tag);
+    download(&source, &base, &store, pet, progress)
 }
 
 fn download(
@@ -510,6 +556,30 @@ mod tests {
         assert_eq!(format_eta(9.1), "00:10");
         assert_eq!(format_eta(125.0), "02:05");
         assert_eq!(format_eta(10_000.0), "99:59");
+    }
+
+    #[test]
+    fn explicit_media_must_be_usable_and_wins_without_downloading() {
+        let dir = tempfile::tempdir().unwrap();
+        let media = dir.path().join("media");
+        std::fs::create_dir_all(media.join("anim")).unwrap();
+        assert!(resolve_media_for(PET, Some(&media)).is_err());
+
+        std::fs::write(media.join("anim/待机.webp"), b"webp").unwrap();
+        let resolved = resolve_media_for(PET, Some(&media)).unwrap().unwrap();
+        assert_eq!(resolved.source, MediaSource::Explicit);
+        assert_eq!(resolved.path, media.canonicalize().unwrap());
+
+        std::fs::remove_dir_all(media.join("anim")).unwrap();
+        std::fs::create_dir_all(media.join("packed")).unwrap();
+        std::fs::write(media.join("packed/library.json"), b"{}").unwrap();
+        assert_eq!(
+            resolve_media_for(PET, Some(&media))
+                .unwrap()
+                .unwrap()
+                .source,
+            MediaSource::Explicit
+        );
     }
 
     fn bundle() -> (Source, Manifest, Vec<u8>) {

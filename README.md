@@ -68,7 +68,9 @@ pet tui
 
 Original WebP resources come from the independent [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) release. The downloader verifies the manifest, archive and every file with SHA-256, then stores the result under `<assets_root>/<pet>/assets/assets-v1/` for offline reuse. The default root is `$XDG_DATA_HOME` (usually `~/.local/share`); set another root with `pet assets-dir PATH`, or select **素材目录** in the TUI and press Enter. Enter `default` to reset. Existing files stay in the old root, and running pets use the new root after restart. A requested clip is decoded on a background thread, cropped losslessly in memory, and kept in a bounded 32 MiB hot cache by default. The green-screen cleanup markers and original WebP bytes are preserved.
 
-The compact TUI keeps a readable background on the selected pet row. Size and cache use visible `[-] value [+]` controls: `-`/`+` or left/right adjust, up/down selects a field, and Enter/Space toggles Alpha. `pet run <name> --foreground` is available for debugging; normal `pet run <name>` exits after download and leaves the pet running in the background.
+When running from a source checkout, the CLI and TUI use the tracked `<repository>/<pet>/media` directory first, so those original WebP files are neither copied nor downloaded again. A valid `--media-dir` has the highest priority, an existing verified managed cache comes next, and only an installed `pet` with no local copy downloads the requested character. `pet download <pet>` remains the explicit refresh/download command.
+
+The compact TUI keeps a readable background on the selected pet row. Every character shows whether it is running or stopped, together with its local-repository, managed-cache, download or missing state. Size and cache use visible `[-] value [+]` controls: `-`/`+` or left/right adjust, up/down selects a field, and Enter/Space toggles Alpha. `pet run <name> --foreground` is available for debugging; normal `pet run <name>` exits after download and leaves the pet running in the background.
 
 ### Release channels
 
@@ -541,7 +543,9 @@ pet tui
 
 原始 WebP 从独立的 [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `<素材根目录>/<角色>/assets/assets-v1/`，之后可离线复用。默认根目录是 `$XDG_DATA_HOME`（通常是 `~/.local/share`）；可用 `pet assets-dir 目录`，或在 TUI 中选择 **素材目录** 后按 Enter 修改。输入 `default` 可恢复默认。原有文件不会自动搬走，运行中的桌宠重启后使用新目录。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
 
-紧凑 TUI 的选中角色行有清晰背景高亮。大小和缓存显示为可操作的 `[-] 数值 [+]`：用 `-`/`+` 或左右键调整，用上下键选择项目，Enter/空格切换 Alpha。排查时可运行 `pet run <角色> --foreground`；普通 `pet run <角色>` 会在下载完成后退出终端阻塞，让桌宠留在后台。
+从源码仓库运行时，CLI 和 TUI 会优先直接使用仓库中已有的 `<仓库>/<角色>/media`，不会复制或重复下载这些原始 WebP。有效的 `--media-dir` 优先级最高，其次是仓库素材和已校验的受管缓存；只有没有本地素材的安装版 `pet` 才会按需下载。`pet download <角色>` 仍可显式下载或刷新素材。
+
+紧凑 TUI 的选中角色行有清晰背景高亮。每只角色会明确显示“运行中”或“已停止”，并标出素材来自本地仓库、受管缓存、正在下载或尚待下载。大小和缓存显示为可操作的 `[-] 数值 [+]`：用 `-`/`+` 或左右键调整，用上下键选择项目，Enter/空格切换 Alpha。排查时可运行 `pet run <角色> --foreground`；普通 `pet run <角色>` 会在下载完成后退出终端阻塞，让桌宠留在后台。
 
 ### 发布通道
 

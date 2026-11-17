@@ -57,8 +57,8 @@ fn dispatch(args: &[String]) -> Result<(), String> {
                 return runtime::entry(options);
             }
             if options.is_empty() {
-                assets::download_cli()?;
-                println!("{}", control::start_for(pet)?);
+                let media = assets::prepare_media_for(pet, None)?;
+                println!("{}", control::start_for_media(pet, &media.path)?);
                 return Ok(());
             }
             runtime::entry(options)
@@ -71,7 +71,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
                 return download_all();
             }
             character::select(name)
-                .and_then(|_| assets::download_cli())
+                .and_then(|_| assets::download_for(character::selected()))
                 .map(|path| {
                     println!("动画资源已就绪：{}", path.display());
                 })
@@ -104,11 +104,9 @@ fn legacy_pet(name: &str, args: &[String]) -> Result<(), String> {
     match args {
         [] => toggle_pet(pet),
         [command] if command == "build" => build(),
-        [command] if command == "prepare" => {
-            assets::ensure(&assets::default_media()?).map(|path| {
-                println!("动画资源已就绪：{}", path.display());
-            })
-        }
+        [command] if command == "prepare" => assets::prepare_media_for(pet, None).map(|media| {
+            println!("动画资源已就绪：{}", media.path.display());
+        }),
         [command, percent] if command == "size" => set_size(pet, percent),
         _ => Err(format!(
             "用法：pet {name} | pet {name} size 50..150 | pet {name} prepare | pet {name} build"
@@ -122,8 +120,8 @@ fn toggle_pet(pet: &'static str) -> Result<(), String> {
         println!("{pet} 已关闭");
         return Ok(());
     }
-    assets::ensure(&assets::default_media()?)?;
-    println!("{}", control::start_for(pet)?);
+    let media = assets::prepare_media_for(pet, None)?;
+    println!("{}", control::start_for_media(pet, &media.path)?);
     Ok(())
 }
 

@@ -63,7 +63,7 @@ pub fn pet_running(pet: &str) -> bool {
     read_pid_for(pet).is_some()
 }
 
-pub fn start_for(pet: &str) -> Result<String, String> {
+pub fn start_for_media(pet: &str, media: &Path) -> Result<String, String> {
     if let Some(pid) = read_pid_for(pet) {
         return Ok(format!("已在运行 · PID {pid}"));
     }
@@ -87,6 +87,8 @@ pub fn start_for(pet: &str) -> Result<String, String> {
     command
         .arg("run")
         .arg(pet)
+        .arg("--media-dir")
+        .arg(media)
         .env(LOCK_WAIT_ENV, "1")
         .env(FOREGROUND_ENV, "1")
         .stdin(Stdio::null())
