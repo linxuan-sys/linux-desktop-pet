@@ -185,10 +185,6 @@ fn repository_candidates(pet: &str) -> Vec<PathBuf> {
     {
         push_ancestor_candidates(&mut candidates, directory, pet);
     }
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    if let Some(workspace) = manifest_dir.parent() {
-        candidates.push(workspace.join(pet).join("media"));
-    }
     if let Ok(current) = std::env::current_dir() {
         push_ancestor_candidates(&mut candidates, &current, pet);
     }
@@ -226,6 +222,16 @@ pub fn resolve_media_for(
             }))
         } else {
             Err(format!("素材目录不可用：{}", path.display()))
+        };
+    }
+    if let Some(path) = crate::settings::configured_media_dir(pet)? {
+        return if usable_local_media(&path) {
+            Ok(Some(MediaLocation {
+                path: canonical_media(&path),
+                source: MediaSource::Explicit,
+            }))
+        } else {
+            Err(format!("手动素材目录不可用：{}", path.display()))
         };
     }
     if let Some(path) = repository_candidates(pet)
@@ -335,21 +341,25 @@ pub fn download_for(pet: &str) -> Result<PathBuf, String> {
     if io::stderr().is_terminal() {
         let pet = pet.to_owned();
         let (sender, progress) = channel();
-        let worker = std::thread::spawn(move || download_managed(&pet, Some(&sender)));
+        let worker = std::thread::spawn(move || download_managed(&pet, Some(&sender), true));
         render_cli_progress(progress);
         return worker
             .join()
             .map_err(|_| "resource download worker panicked".to_string())?;
     }
-    download_managed(pet, None)
+    download_managed(pet, None, true)
 }
 
 #[cfg(feature = "unified")]
 pub fn download_with_progress_for(pet: &str, progress: ProgressSender) -> Result<PathBuf, String> {
-    download_managed(pet, Some(&progress))
+    download_managed(pet, Some(&progress), true)
 }
 
-fn download_managed(pet: &str, progress: Option<&ProgressSender>) -> Result<PathBuf, String> {
+fn download_managed(
+    pet: &str,
+    progress: Option<&ProgressSender>,
+    check_updates: bool,
+) -> Result<PathBuf, String> {
     let source = Source::default();
     source.validate()?;
     let base = source.base();
@@ -357,7 +367,17 @@ fn download_managed(pet: &str, progress: Option<&ProgressSender>) -> Result<Path
         return Err("resource URL must use HTTP(S)".into());
     }
     let store = pet_data(pet)?.join("assets").join(&source.tag);
-    download(&source, &base, &store, pet, progress)
+    download(&source, &base, &store, pet, progress, check_updates)
+}
+
+fn cached_manifest(source: &Source, base: &str, store: &Path, pet: &str) -> Option<Manifest> {
+    if !std::fs::read_to_string(store.join(".origin")).is_ok_and(|origin| origin == base) {
+        return None;
+    }
+    let manifest = std::fs::read(store.join(".ready.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())?;
+    (manifest.validate_for(source, pet).is_ok() && manifest.available(store)).then_some(manifest)
 }
 
 fn download(
@@ -366,6 +386,7 @@ fn download(
     store: &Path,
     pet: &str,
     progress: Option<&ProgressSender>,
+    check_updates: bool,
 ) -> Result<PathBuf, String> {
     source.validate()?;
     let parent = store.parent().ok_or("invalid resource cache path")?;
@@ -378,12 +399,8 @@ fn download(
         .open(parent.join("download.lock"))
         .map_err(|e| e.to_string())?;
     fs2::FileExt::lock_exclusive(&lock).map_err(|e| e.to_string())?;
-    if std::fs::read_to_string(store.join(".origin")).is_ok_and(|s| s == base)
-        && let Ok(bytes) = std::fs::read(store.join(".ready.json"))
-        && let Ok(manifest) = serde_json::from_slice::<Manifest>(&bytes)
-        && manifest.validate_for(source, pet).is_ok()
-        && manifest.available(store)
-    {
+    let cached = cached_manifest(source, base, store, pet);
+    if cached.is_some() && !check_updates {
         return Ok(store.to_path_buf());
     }
     let agent = ureq::Agent::config_builder()
@@ -414,6 +431,16 @@ fn download(
     }
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     manifest.validate_for(source, pet)?;
+    if cached.as_ref().is_some_and(|cached| {
+        cached
+            .archive_sha256
+            .eq_ignore_ascii_case(&manifest.archive_sha256)
+    }) {
+        if progress.is_none() {
+            eprintln!("{name} 动画资源已是最新。");
+        }
+        return Ok(store.to_path_buf());
+    }
     if let Some(progress) = progress {
         let _ = progress.send(Progress::Download {
             received: 0,
@@ -574,12 +601,12 @@ mod tests {
         assert!(resolve_media_for(PET, Some(&media)).is_err());
     }
 
-    fn bundle() -> (Source, Manifest, Vec<u8>) {
+    fn bundle_with(webp: &[u8]) -> (Source, Manifest, Vec<u8>) {
         let source = Source::default();
         let mut files = BTreeMap::new();
         let mut tar = tar::Builder::new(Vec::new());
         for (name, data) in [
-            ("anim/待机.webp", b"original WebP bytes".as_slice()),
+            ("anim/待机.webp", webp),
             ("ASSETS.json", br#"{"status":"cleaned"}"#.as_slice()),
         ] {
             let mut header = tar::Header::new_gnu();
@@ -609,38 +636,48 @@ mod tests {
         };
         (source, manifest, archive)
     }
+    fn bundle() -> (Source, Manifest, Vec<u8>) {
+        bundle_with(b"original WebP bytes")
+    }
     fn server(manifest: &Manifest, archive: Vec<u8>) -> (String, std::thread::JoinHandle<()>) {
+        server_versions(vec![(serde_json::to_value(manifest).unwrap(), archive)])
+    }
+    fn server_versions(
+        versions: Vec<(serde_json::Value, Vec<u8>)>,
+    ) -> (String, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let manifest = serde_json::to_vec(manifest).unwrap();
         let thread = std::thread::spawn(move || {
-            for _ in 0..2 {
-                let (mut socket, _) = listener.accept().unwrap();
-                socket
-                    .set_read_timeout(Some(Duration::from_secs(3)))
-                    .unwrap();
-                use std::io::BufRead;
-                let mut reader = std::io::BufReader::new(&mut socket);
-                let mut request = String::new();
-                reader.read_line(&mut request).unwrap();
-                loop {
-                    let mut header = String::new();
-                    if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
-                        break;
+            for (manifest, archive) in versions {
+                let manifest = serde_json::to_vec(&manifest).unwrap();
+                for _ in 0..2 {
+                    let (mut socket, _) = listener.accept().unwrap();
+                    socket
+                        .set_read_timeout(Some(Duration::from_secs(3)))
+                        .unwrap();
+                    use std::io::BufRead;
+                    let mut reader = std::io::BufReader::new(&mut socket);
+                    let mut request = String::new();
+                    reader.read_line(&mut request).unwrap();
+                    loop {
+                        let mut header = String::new();
+                        if reader.read_line(&mut header).unwrap() == 0 || header == "\r\n" {
+                            break;
+                        }
                     }
+                    let body = if request.lines().next().unwrap().contains(".manifest.json") {
+                        &manifest
+                    } else {
+                        &archive
+                    };
+                    write!(
+                        socket,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                    socket.write_all(body).unwrap();
                 }
-                let body = if request.lines().next().unwrap().contains(".manifest.json") {
-                    &manifest
-                } else {
-                    &archive
-                };
-                write!(
-                    socket,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    body.len()
-                )
-                .unwrap();
-                socket.write_all(body).unwrap();
             }
         });
         (base, thread)
@@ -652,7 +689,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("assets-v1");
         assert_eq!(
-            download(&source, &base, &target, PET, None).unwrap(),
+            download(&source, &base, &target, PET, None, false).unwrap(),
             target
         );
         server.join().unwrap();
@@ -666,8 +703,29 @@ mod tests {
         );
         // Server is gone. Any accidental network request makes this fail.
         assert_eq!(
-            download(&source, &base, &target, PET, None).unwrap(),
+            download(&source, &base, &target, PET, None, false).unwrap(),
             target
+        );
+    }
+    #[test]
+    fn explicit_refresh_replaces_managed_assets_when_the_remote_manifest_changes() {
+        let (source, first_manifest, first_archive) = bundle();
+        let (_, second_manifest, second_archive) = bundle_with(b"updated WebP bytes");
+        let (base, server) = server_versions(vec![
+            (serde_json::to_value(first_manifest).unwrap(), first_archive),
+            (
+                serde_json::to_value(second_manifest).unwrap(),
+                second_archive,
+            ),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("assets-v1");
+        download(&source, &base, &target, PET, None, false).unwrap();
+        download(&source, &base, &target, PET, None, true).unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            std::fs::read(target.join("anim/待机.webp")).unwrap(),
+            b"updated WebP bytes"
         );
     }
     #[test]
@@ -679,7 +737,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("assets-v1");
         assert!(
-            download(&source, &base, &target, PET, None)
+            download(&source, &base, &target, PET, None, false)
                 .unwrap_err()
                 .contains("SHA-256")
         );

@@ -8,6 +8,9 @@ pub struct Settings {
     /// Root containing one data directory per character. Keeping this global
     /// lets downloads and the runtime resolve the same location.
     pub assets_root: PathBuf,
+    /// Optional per-character source directory. When present it takes priority
+    /// over repository discovery and managed downloads.
+    pub media_dir: Option<PathBuf>,
     pub scale: f64,
     pub cache_mib: usize,
     pub output: Option<String>,
@@ -31,6 +34,7 @@ impl Settings {
         }
         let assets_root = parse_assets_root(raw.get("assets_root"))?;
         let section = &raw["pets"][pet];
+        let media_dir = parse_media_dir(section.get("media_dir"))?;
         let scale = match section.get("scale") {
             None => 1.0,
             Some(v) => v
@@ -67,6 +71,7 @@ impl Settings {
         }
         Ok(Self {
             assets_root,
+            media_dir,
             scale,
             cache_mib,
             output,
@@ -111,7 +116,21 @@ fn parse_assets_root(value: Option<&Value>) -> Result<PathBuf, String> {
     }
 }
 
-pub fn configured_assets_root() -> Result<PathBuf, String> {
+fn parse_media_dir(value: Option<&Value>) -> Result<Option<PathBuf>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.trim().is_empty() => {
+            let path = expand_home(value.trim());
+            if !path.is_absolute() {
+                return Err("media_dir must be an absolute path or start with ~/".into());
+            }
+            Ok(Some(path))
+        }
+        _ => Err("media_dir must be a nonempty absolute path string or null".into()),
+    }
+}
+
+fn read_config() -> Result<Value, String> {
     let path = config_path();
     let raw: Value = match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
@@ -122,7 +141,17 @@ pub fn configured_assets_root() -> Result<PathBuf, String> {
     if !raw.is_object() && !raw.is_null() {
         return Err("configuration root must be an object".into());
     }
+    Ok(raw)
+}
+
+pub fn configured_assets_root() -> Result<PathBuf, String> {
+    let raw = read_config()?;
     parse_assets_root(raw.get("assets_root"))
+}
+
+pub fn configured_media_dir(pet: &str) -> Result<Option<PathBuf>, String> {
+    let raw = read_config()?;
+    parse_media_dir(raw["pets"][pet].get("media_dir"))
 }
 
 #[cfg(feature = "unified")]
@@ -145,6 +174,24 @@ pub fn resolve_assets_root_input(value: &str) -> Result<PathBuf, String> {
 }
 
 #[cfg(feature = "unified")]
+pub fn resolve_media_dir_input(value: &str) -> Result<PathBuf, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("手动素材目录不能为空".into());
+    }
+    let path = expand_home(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(path)
+    };
+    path.canonicalize()
+        .map_err(|error| format!("无法访问素材目录 {}: {error}", path.display()))
+}
+
+#[cfg(feature = "unified")]
 pub fn set_assets_root(value: &str, reset: bool) -> Result<PathBuf, String> {
     if reset {
         update_for(crate::character::selected(), |raw| {
@@ -158,6 +205,20 @@ pub fn set_assets_root(value: &str, reset: bool) -> Result<PathBuf, String> {
         raw["assets_root"] = Value::String(saved)
     })?;
     Ok(root)
+}
+
+#[cfg(feature = "unified")]
+pub fn set_media_dir(pet: &str, value: &str, reset: bool) -> Result<Option<PathBuf>, String> {
+    if reset {
+        update_for(pet, |raw| raw["pets"][pet]["media_dir"] = Value::Null)?;
+        return Ok(None);
+    }
+    let path = resolve_media_dir_input(value)?;
+    let saved = path.to_string_lossy().into_owned();
+    update_for(pet, |raw| {
+        raw["pets"][pet]["media_dir"] = Value::String(saved)
+    })?;
+    Ok(Some(path))
 }
 
 pub fn config_path() -> PathBuf {
@@ -351,6 +412,21 @@ mod tests {
             "pets": {}
         });
         assert!(Settings::parse_for(&relative, crate::character::selected()).is_err());
+    }
+
+    #[test]
+    fn media_dir_is_per_character_and_requires_an_absolute_path() {
+        let pet = crate::character::selected();
+        let media = default_assets_root().join("manual-media");
+        let mut configured = serde_json::json!({ "pets": {} });
+        configured["pets"][pet]["media_dir"] = serde_json::json!(media);
+        assert_eq!(
+            Settings::parse_for(&configured, pet).unwrap().media_dir,
+            Some(media)
+        );
+        let mut relative = serde_json::json!({ "pets": {} });
+        relative["pets"][pet]["media_dir"] = serde_json::json!("manual-media");
+        assert!(Settings::parse_for(&relative, pet).is_err());
     }
 
     #[test]

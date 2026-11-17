@@ -38,6 +38,24 @@ enum Focus {
     Settings,
 }
 
+#[derive(Clone)]
+enum MediaState {
+    Ready(assets::MediaLocation),
+    Missing,
+    Invalid(String),
+}
+
+#[derive(Clone, Copy)]
+enum PathTarget {
+    ManualMedia,
+    AssetsRoot,
+}
+
+struct PathEdit {
+    target: PathTarget,
+    text: String,
+}
+
 struct Download {
     pet: &'static str,
     receiver: Receiver<Result<PathBuf, String>>,
@@ -56,33 +74,39 @@ struct App {
     notice: String,
     download: Option<Download>,
     progress: f64,
-    editing_path: Option<String>,
-    media_sources: BTreeMap<&'static str, Option<assets::MediaSource>>,
+    editing_path: Option<PathEdit>,
+    media: BTreeMap<&'static str, MediaState>,
 }
 
 impl App {
     fn new() -> Self {
-        let media_sources = character::PETS
+        let media = character::PETS
             .iter()
-            .map(|pet| {
-                let source = assets::resolve_media_for(pet, None)
-                    .ok()
-                    .flatten()
-                    .map(|media| media.source);
-                (*pet, source)
-            })
+            .map(|pet| (*pet, Self::resolve_media(pet)))
             .collect();
         Self {
             selected: 0,
             field: 0,
             focus: Focus::Pets,
             theme: Theme::detect(),
-            notice: "选择一位伙伴；素材只下载一次，更新程序不会删除。".into(),
+            notice: "本地或手动素材优先；按 d 检查更新，只有内容变化时才重新下载。".into(),
             download: None,
             progress: 0.0,
             editing_path: None,
-            media_sources,
+            media,
         }
+    }
+
+    fn resolve_media(pet: &str) -> MediaState {
+        match assets::resolve_media_for(pet, None) {
+            Ok(Some(media)) => MediaState::Ready(media),
+            Ok(None) => MediaState::Missing,
+            Err(error) => MediaState::Invalid(error),
+        }
+    }
+
+    fn refresh_media(&mut self, pet: &'static str) {
+        self.media.insert(pet, Self::resolve_media(pet));
     }
 
     fn pet(&self) -> &'static str {
@@ -129,30 +153,61 @@ impl App {
         };
     }
 
-    fn begin_path_edit(&mut self) {
-        let result = self
-            .values()
-            .map(|values| values.assets_root.display().to_string());
+    fn begin_path_edit(&mut self, target: PathTarget) {
+        let result = self.values().map(|values| match target {
+            PathTarget::ManualMedia => values
+                .media_dir
+                .map(|path| path.display().to_string())
+                .unwrap_or_default(),
+            PathTarget::AssetsRoot => values.assets_root.display().to_string(),
+        });
         match result {
             Ok(path) => {
-                self.editing_path = Some(path);
-                self.notice = "编辑素材目录；Enter 保存，Esc 取消。".into();
+                self.editing_path = Some(PathEdit { target, text: path });
+                self.notice = match target {
+                    PathTarget::ManualMedia => {
+                        "编辑手动素材目录；输入 default 恢复自动选择，Esc 取消。".into()
+                    }
+                    PathTarget::AssetsRoot => {
+                        "编辑下载存储目录；输入 default 恢复默认，Esc 取消。".into()
+                    }
+                };
             }
             Err(error) => self.notice = error,
         }
     }
 
     fn finish_path_edit(&mut self) {
-        let Some(path) = self.editing_path.take() else {
+        let Some(edit) = self.editing_path.take() else {
             return;
         };
-        let reset = path.trim() == "default";
-        self.notice = match settings::set_assets_root(&path, reset) {
-            Ok(root) => format!(
-                "素材目录已{}：{}；原有文件不会移动，重启桌宠后生效。",
-                if reset { "恢复默认" } else { "保存" },
-                root.display()
-            ),
+        let reset = edit.text.trim() == "default";
+        let pet = self.pet();
+        let result = match edit.target {
+            PathTarget::ManualMedia => {
+                let result = if reset {
+                    settings::set_media_dir(pet, "", true).map(|_| ())
+                } else {
+                    settings::resolve_media_dir_input(&edit.text)
+                        .and_then(|path| assets::resolve_media_for(pet, Some(&path)).map(|_| ()))
+                        .and_then(|()| settings::set_media_dir(pet, &edit.text, false).map(|_| ()))
+                };
+                result.map(|()| match reset {
+                    true => "手动素材目录已恢复为自动选择。".to_string(),
+                    false => "手动素材目录已保存；有素材时不会重复下载。".to_string(),
+                })
+            }
+            PathTarget::AssetsRoot => settings::set_assets_root(&edit.text, reset).map(|root| {
+                format!(
+                    "下载存储目录已{}：{}",
+                    if reset { "恢复默认" } else { "保存" },
+                    root.display()
+                )
+            }),
+        };
+        self.refresh_media(pet);
+        self.notice = match result {
+            Ok(message) => message,
             Err(error) => error,
         };
     }
@@ -163,6 +218,27 @@ impl App {
             return;
         }
         let pet = self.pet();
+        match self.media.get(pet).cloned() {
+            Some(MediaState::Ready(media))
+                if matches!(
+                    media.source,
+                    assets::MediaSource::Repository | assets::MediaSource::Explicit
+                ) =>
+            {
+                self.refresh_media(pet);
+                self.notice = format!(
+                    "{} 正在使用本地素材，无需下载：{}",
+                    NAMES[self.selected],
+                    media.path.display()
+                );
+                return;
+            }
+            Some(MediaState::Invalid(error)) => {
+                self.notice = format!("素材路径不可用，未触发下载：{error}");
+                return;
+            }
+            _ => {}
+        }
         let (sender, receiver) = mpsc::channel();
         let (progress_sender, progress) = mpsc::channel();
         std::thread::spawn(move || {
@@ -191,13 +267,13 @@ impl App {
         let result = if control::pet_running(pet) {
             control::stop_for(pet).map(|_| "已发送停止信号。".into())
         } else {
-            match assets::resolve_media_for(pet, None) {
-                Ok(Some(media)) => control::start_for_media(pet, &media.path),
-                Ok(None) => {
+            match self.media.get(pet).cloned().unwrap_or(MediaState::Missing) {
+                MediaState::Ready(media) => control::start_for_media(pet, &media.path),
+                MediaState::Missing => {
                     self.download(true);
                     return;
                 }
-                Err(error) => Err(error),
+                MediaState::Invalid(error) => Err(error),
             }
         };
         self.notice = match result {
@@ -225,8 +301,13 @@ impl App {
             Ok(Ok(path)) => {
                 let pet = download.pet;
                 let start_after_download = download.start_after_download;
-                self.media_sources
-                    .insert(pet, Some(assets::MediaSource::Managed));
+                self.media.insert(
+                    pet,
+                    MediaState::Ready(assets::MediaLocation {
+                        path: path.clone(),
+                        source: assets::MediaSource::Managed,
+                    }),
+                );
                 self.notice = if start_after_download {
                     match control::start_for_media(pet, &path) {
                         Ok(message) => {
@@ -253,12 +334,12 @@ impl App {
     }
 
     fn key(&mut self, key: KeyEvent) -> bool {
-        if let Some(path) = &mut self.editing_path {
+        if let Some(edit) = &mut self.editing_path {
             match key.code {
                 KeyCode::Esc => self.editing_path = None,
                 KeyCode::Enter => self.finish_path_edit(),
                 KeyCode::Backspace => {
-                    path.pop();
+                    edit.text.pop();
                 }
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.editing_path = None;
@@ -268,7 +349,7 @@ impl App {
                         .modifiers
                         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    path.push(character);
+                    edit.text.push(character);
                 }
                 _ => {}
             }
@@ -289,7 +370,7 @@ impl App {
             },
             KeyCode::Down | KeyCode::Char('j') => match self.focus {
                 Focus::Pets => self.selected = (self.selected + 1).min(character::PETS.len() - 1),
-                Focus::Settings => self.field = (self.field + 1).min(3),
+                Focus::Settings => self.field = (self.field + 1).min(5),
             },
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-')
                 if self.focus == Focus::Settings =>
@@ -304,7 +385,10 @@ impl App {
             KeyCode::Enter | KeyCode::Char(' ') if self.focus == Focus::Settings => {
                 match self.field {
                     2 => self.change(1),
-                    3 if key.code == KeyCode::Enter => self.begin_path_edit(),
+                    4 if key.code == KeyCode::Enter => {
+                        self.begin_path_edit(PathTarget::ManualMedia)
+                    }
+                    5 if key.code == KeyCode::Enter => self.begin_path_edit(PathTarget::AssetsRoot),
                     _ => {}
                 }
             }
@@ -428,7 +512,7 @@ fn draw(frame: &mut ratatui::Frame, app: &App, running: &BTreeMap<&str, bool>) {
     }
     frame.render_widget(
         Paragraph::new(
-            "↑↓ 选项   Tab 面板   ←→/-/+ 调整   Enter 编辑素材目录   d 下载   s 启停   q 退出",
+            "↑↓ 选项   Tab 面板   ←→/-/+ 调整   Enter 编辑/确认   d 更新素材   s 启停   q 退出",
         )
         .alignment(Alignment::Center)
         .style(theme.dim(DIM)),
@@ -438,7 +522,7 @@ fn draw(frame: &mut ratatui::Frame, app: &App, running: &BTreeMap<&str, bool>) {
 
 fn draw_pets(frame: &mut ratatui::Frame, area: Rect, app: &App, running: &BTreeMap<&str, bool>) {
     let items = character::PETS.iter().enumerate().map(|(index, pet)| {
-        let source = app.media_sources.get(pet).copied().flatten();
+        let media = app.media.get(pet);
         let media_status: &str = if app
             .download
             .as_ref()
@@ -446,10 +530,14 @@ fn draw_pets(frame: &mut ratatui::Frame, area: Rect, app: &App, running: &BTreeM
         {
             "下载中"
         } else {
-            match source {
-                Some(assets::MediaSource::Repository | assets::MediaSource::Explicit) => "本地仓库",
-                Some(assets::MediaSource::Managed) => "受管缓存",
-                None => "待下载",
+            match media {
+                Some(MediaState::Ready(media)) => match media.source {
+                    assets::MediaSource::Repository => "本地仓库",
+                    assets::MediaSource::Explicit => "手动素材",
+                    assets::MediaSource::Managed => "受管缓存",
+                },
+                Some(MediaState::Invalid(_)) => "路径错误",
+                Some(MediaState::Missing) | None => "待下载",
             }
         };
         let is_running = running.get(pet).copied().unwrap_or(false);
@@ -465,7 +553,11 @@ fn draw_pets(frame: &mut ratatui::Frame, area: Rect, app: &App, running: &BTreeM
             ),
             Span::styled(
                 media_status,
-                app.theme.dim(if source.is_some() { GREEN } else { DIM }),
+                app.theme.dim(match media {
+                    Some(MediaState::Ready(_)) => GREEN,
+                    Some(MediaState::Invalid(_)) => CORAL,
+                    Some(MediaState::Missing) | None => DIM,
+                }),
             ),
         ]))
     });
@@ -503,10 +595,22 @@ fn draw_settings(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let values = app.values();
-    let labels = ["大小", "动作缓存", "预乘 Alpha", "素材目录"];
+    let labels = [
+        "大小",
+        "动作缓存",
+        "预乘 Alpha",
+        "实际素材",
+        "手动素材",
+        "存储目录",
+    ];
     let mut display = values
         .as_ref()
         .map(|values| {
+            let actual = match app.media.get(app.pet()) {
+                Some(MediaState::Ready(media)) => media.path.display().to_string(),
+                Some(MediaState::Invalid(error)) => format!("不可用：{error}"),
+                Some(MediaState::Missing) | None => "尚未准备（启动时下载）".into(),
+            };
             [
                 format!("[-]  {:.0}%  [+]", values.scale * 100.0),
                 format!("[-]  {} MiB  [+]", values.cache_mib),
@@ -515,6 +619,12 @@ fn draw_settings(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 } else {
                     "[切换]  关闭 · 保留原色".into()
                 },
+                actual,
+                values
+                    .media_dir
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "未指定（自动选择）".into()),
                 values.assets_root.display().to_string(),
             ]
         })
@@ -524,29 +634,31 @@ fn draw_settings(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 "请检查 JSON".into(),
                 "—".into(),
                 "—".into(),
+                "—".into(),
+                "—".into(),
             ]
         });
-    if let Some(path) = &app.editing_path {
-        display[3] = format!("> {path}▏");
+    if let Some(edit) = &app.editing_path {
+        display[match edit.target {
+            PathTarget::ManualMedia => 4,
+            PathTarget::AssetsRoot => 5,
+        }] = format!("> {}▏", edit.text);
     }
     let lines = labels
         .iter()
         .enumerate()
-        .flat_map(|(index, label)| {
+        .map(|(index, label)| {
             let selected = app.focus == Focus::Settings && app.field == index;
-            [
-                Line::from(vec![
-                    Span::styled(
-                        format!("{} {:<10}", if selected { "❯" } else { " " }, label),
-                        app.theme.fg(if selected { GOLD } else { theme::BLUE }),
-                    ),
-                    Span::styled(
-                        &display[index],
-                        app.theme.fg(if selected { CORAL } else { DIM }),
-                    ),
-                ]),
-                Line::from(""),
-            ]
+            Line::from(vec![
+                Span::styled(
+                    format!("{} {:<10}", if selected { "❯" } else { " " }, label),
+                    app.theme.fg(if selected { GOLD } else { theme::BLUE }),
+                ),
+                Span::styled(
+                    &display[index],
+                    app.theme.fg(if selected { CORAL } else { DIM }),
+                ),
+            ])
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
@@ -587,8 +699,13 @@ mod tests {
         app.selected = 7;
         app.focus = Focus::Settings;
         app.field = 1;
-        app.media_sources
-            .insert(character::PETS[0], Some(assets::MediaSource::Repository));
+        app.media.insert(
+            character::PETS[0],
+            MediaState::Ready(assets::MediaLocation {
+                path: PathBuf::from("/fork/linux-desktop-pet/claude-girl/media"),
+                source: assets::MediaSource::Repository,
+            }),
+        );
         let running = BTreeMap::from([(character::PETS[0], true)]);
         terminal.draw(|frame| draw(frame, &app, &running)).unwrap();
         let buffer = terminal.backend().buffer();
@@ -609,7 +726,9 @@ mod tests {
             "[-]",
             "[+]",
             "MiB",
-            "素材目录",
+            "实际素材",
+            "手动素材",
+            "存储目录",
             "Tab",
             "下载",
             "运行中",
@@ -619,6 +738,11 @@ mod tests {
             let needle = text.split_whitespace().collect::<String>();
             assert!(compact.contains(&needle), "missing {text}\n{content}");
         }
+        assert!(
+            compact.contains("/home/tingfeng/code/self_project/")
+                && compact.contains("kimi-girl/media"),
+            "missing resolved media path\n{content}"
+        );
     }
 
     #[test]
@@ -636,6 +760,21 @@ mod tests {
                 .iter()
                 .all(|cell| cell.bg != ratatui::style::Color::Rgb(0x14, 0x15, 0x1c))
         );
+    }
+
+    #[test]
+    fn update_action_keeps_usable_local_media_without_downloading() {
+        let mut app = App::new();
+        app.media.insert(
+            character::PETS[0],
+            MediaState::Ready(assets::MediaLocation {
+                path: PathBuf::from("/fork/linux-desktop-pet/claude-girl/media"),
+                source: assets::MediaSource::Repository,
+            }),
+        );
+        app.download(false);
+        assert!(app.download.is_none());
+        assert!(app.notice.contains("无需下载"));
     }
 
     #[test]
