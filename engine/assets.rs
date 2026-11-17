@@ -135,44 +135,22 @@ impl Manifest {
     }
 }
 
-pub fn default_media() -> PathBuf {
+pub fn default_media() -> Result<PathBuf, String> {
     default_media_for(crate::character::selected())
 }
 
-pub fn default_media_for(pet: &str) -> PathBuf {
-    pet_data(pet).join("media")
+pub fn default_media_for(pet: &str) -> Result<PathBuf, String> {
+    Ok(pet_data(pet)?.join("media"))
 }
 
-pub fn pet_data(pet: &str) -> PathBuf {
-    pet_data_impl(pet)
-}
-
-#[cfg(feature = "unified")]
-fn pet_data_impl(pet: &str) -> PathBuf {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-        });
-    data.join(pet)
-}
-
-#[cfg(not(feature = "unified"))]
-fn pet_data_impl(pet: &str) -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-        })
-        .join(pet)
+pub fn pet_data(pet: &str) -> Result<PathBuf, String> {
+    Ok(crate::settings::configured_assets_root()?.join(pet))
 }
 
 #[cfg(feature = "unified")]
 pub fn installed(pet: &str) -> Option<PathBuf> {
-    let source = source(&default_media_for(pet)).ok()?;
-    let store = pet_data(pet).join("assets");
+    let source = source(&default_media_for(pet).ok()?).ok()?;
+    let store = pet_data(pet).ok()?.join("assets");
     for entry in std::fs::read_dir(store).ok()?.flatten() {
         let path = entry.path();
         let manifest = std::fs::read(path.join(".ready.json"))
@@ -219,9 +197,7 @@ fn ensure_inner(media: &Path, progress: Option<&ProgressSender>) -> Result<PathB
     if !(base.starts_with("https://") || base.starts_with("http://")) {
         return Err("resource URL must use HTTP(S)".into());
     }
-    let store = default_media()
-        .parent()
-        .ok_or("invalid user data directory")?
+    let store = pet_data(crate::character::selected())?
         .join("assets")
         .join(&source.tag);
     download(
@@ -313,19 +289,15 @@ fn flush_stderr() {
 
 #[cfg(feature = "unified")]
 pub fn download_cli() -> Result<PathBuf, String> {
-    ensure(&default_media())
+    ensure(&default_media()?)
 }
 
 #[cfg(feature = "unified")]
 pub fn download_with_progress_for(pet: &str, progress: ProgressSender) -> Result<PathBuf, String> {
-    let media = default_media_for(pet);
+    let media = default_media_for(pet)?;
     let source = source(&media)?;
     let base = source.base();
-    let store = media
-        .parent()
-        .ok_or("invalid user data directory")?
-        .join("assets")
-        .join(&source.tag);
+    let store = pet_data(pet)?.join("assets").join(&source.tag);
     download(&source, &base, &store, pet, Some(&progress))
 }
 

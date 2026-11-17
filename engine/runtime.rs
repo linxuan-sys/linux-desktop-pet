@@ -16,17 +16,12 @@ enum Signal {
     Clipboard,
 }
 
-fn media_candidates() -> Vec<PathBuf> {
+fn media_candidates() -> Result<Vec<PathBuf>, String> {
     let pet = crate::character::selected();
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-        });
     let exe = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let mut dirs = vec![data.join(pet).join("media")];
+    let mut dirs = vec![assets::default_media_for(pet)?];
     if let Some(exe) = exe {
         dirs.extend([
             exe.join("media"),
@@ -41,7 +36,7 @@ fn media_candidates() -> Vec<PathBuf> {
             .join("media"),
         PathBuf::from("media"),
     ]);
-    dirs
+    Ok(dirs)
 }
 pub fn main() {
     let result = crate::character::select(env!("CARGO_PKG_NAME"))
@@ -136,15 +131,17 @@ pub fn entry(arguments: &[String]) -> Result<(), String> {
     {
         return Err("prepare, pack, check and benchmark are mutually exclusive".into());
     }
-    let media = media_override
-        .or_else(|| {
-            media_candidates().into_iter().find(|d| {
+    let media = match media_override {
+        Some(media) => media,
+        None => media_candidates()?
+            .into_iter()
+            .find(|d| {
                 d.join("anim").is_dir()
                     || d.join("packed/library.json").is_file()
                     || d.join("resources.json").is_file()
             })
-        })
-        .unwrap_or_else(assets::default_media);
+            .unwrap_or(assets::default_media()?),
+    };
     let media = assets::ensure(&media)?;
     if download_only {
         println!("动画资源已就绪：{}", media.display());

@@ -2,7 +2,7 @@ mod theme;
 
 use crate::{assets, character, control, settings};
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
@@ -55,6 +55,7 @@ struct App {
     notice: String,
     download: Option<Download>,
     progress: f64,
+    editing_path: Option<String>,
 }
 
 impl App {
@@ -67,6 +68,7 @@ impl App {
             notice: "选择一位伙伴；素材只下载一次，更新程序不会删除。".into(),
             download: None,
             progress: 0.0,
+            editing_path: None,
         }
     }
 
@@ -115,6 +117,34 @@ impl App {
         })();
         self.notice = match result {
             Ok(()) => "设置已保存，运行中的宠物会在半秒内应用。".into(),
+            Err(error) => error,
+        };
+    }
+
+    fn begin_path_edit(&mut self) {
+        let result = self
+            .values()
+            .map(|values| values.assets_root.display().to_string());
+        match result {
+            Ok(path) => {
+                self.editing_path = Some(path);
+                self.notice = "编辑素材目录；Enter 保存，Esc 取消。".into();
+            }
+            Err(error) => self.notice = error,
+        }
+    }
+
+    fn finish_path_edit(&mut self) {
+        let Some(path) = self.editing_path.take() else {
+            return;
+        };
+        let reset = path.trim() == "default";
+        self.notice = match settings::set_assets_root(&path, reset) {
+            Ok(root) => format!(
+                "素材目录已{}：{}；原有文件不会移动，重启桌宠后生效。",
+                if reset { "恢复默认" } else { "保存" },
+                root.display()
+            ),
             Err(error) => error,
         };
     }
@@ -209,8 +239,29 @@ impl App {
         }
     }
 
-    fn key(&mut self, code: KeyCode) -> bool {
-        match code {
+    fn key(&mut self, key: KeyEvent) -> bool {
+        if let Some(path) = &mut self.editing_path {
+            match key.code {
+                KeyCode::Esc => self.editing_path = None,
+                KeyCode::Enter => self.finish_path_edit(),
+                KeyCode::Backspace => {
+                    path.pop();
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.editing_path = None;
+                }
+                KeyCode::Char(character)
+                    if !key
+                        .modifiers
+                        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    path.push(character);
+                }
+                _ => {}
+            }
+            return true;
+        }
+        match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return false,
             KeyCode::Tab => {
                 self.focus = if self.focus == Focus::Pets {
@@ -225,7 +276,7 @@ impl App {
             },
             KeyCode::Down | KeyCode::Char('j') => match self.focus {
                 Focus::Pets => self.selected = (self.selected + 1).min(character::PETS.len() - 1),
-                Focus::Settings => self.field = (self.field + 1).min(2),
+                Focus::Settings => self.field = (self.field + 1).min(3),
             },
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-')
                 if self.focus == Focus::Settings =>
@@ -238,8 +289,10 @@ impl App {
                 self.change(1)
             }
             KeyCode::Enter | KeyCode::Char(' ') if self.focus == Focus::Settings => {
-                if self.field == 2 {
-                    self.change(1);
+                match self.field {
+                    2 => self.change(1),
+                    3 if key.code == KeyCode::Enter => self.begin_path_edit(),
+                    _ => {}
                 }
             }
             KeyCode::Enter | KeyCode::Char('s') => self.toggle(),
@@ -307,7 +360,7 @@ pub fn run() -> Result<(), String> {
         if event::poll(Duration::from_millis(100)).map_err(|error| error.to_string())? {
             match event::read().map_err(|error| error.to_string())? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
-                    if !app.key(key.code) {
+                    if !app.key(key) {
                         return Ok(());
                     }
                 }
@@ -378,7 +431,7 @@ fn draw(frame: &mut ratatui::Frame, app: &App, running: &BTreeMap<&str, bool>) {
     }
     frame.render_widget(
         Paragraph::new(
-            "↑↓ 选项   Tab 面板   ←→/-/+ 调整   空格切换 Alpha   d 下载   Enter/s 启停   q 退出",
+            "↑↓ 选项   Tab 面板   ←→/-/+ 调整   Enter 编辑素材目录   d 下载   s 启停   q 退出",
         )
         .alignment(Alignment::Center)
         .style(theme.dim(DIM)),
@@ -446,8 +499,8 @@ fn draw_settings(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let values = app.values();
-    let labels = ["大小", "动作缓存", "预乘 Alpha"];
-    let display = values
+    let labels = ["大小", "动作缓存", "预乘 Alpha", "素材目录"];
+    let mut display = values
         .as_ref()
         .map(|values| {
             [
@@ -458,9 +511,20 @@ fn draw_settings(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 } else {
                     "[切换]  关闭 · 保留原色".into()
                 },
+                values.assets_root.display().to_string(),
             ]
         })
-        .unwrap_or_else(|_| ["配置有误".into(), "请检查 JSON".into(), "—".into()]);
+        .unwrap_or_else(|_| {
+            [
+                "配置有误".into(),
+                "请检查 JSON".into(),
+                "—".into(),
+                "—".into(),
+            ]
+        });
+    if let Some(path) = &app.editing_path {
+        display[3] = format!("> {path}▏");
+    }
     let lines = labels
         .iter()
         .enumerate()
@@ -539,6 +603,7 @@ mod tests {
             "[-]",
             "[+]",
             "MiB",
+            "素材目录",
             "Tab",
             "下载",
         ] {

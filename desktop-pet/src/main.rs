@@ -76,6 +76,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
                     println!("动画资源已就绪：{}", path.display());
                 })
         }
+        Some("assets-dir") => assets_dir(&args[1..]),
         Some("stop") => args.get(1).map_or_else(
             || Err("usage: pet stop <角色>".into()),
             |name| character::select(name).and_then(|_| control::stop()),
@@ -103,9 +104,11 @@ fn legacy_pet(name: &str, args: &[String]) -> Result<(), String> {
     match args {
         [] => toggle_pet(pet),
         [command] if command == "build" => build(),
-        [command] if command == "prepare" => assets::ensure(&assets::default_media()).map(|path| {
-            println!("动画资源已就绪：{}", path.display());
-        }),
+        [command] if command == "prepare" => {
+            assets::ensure(&assets::default_media()?).map(|path| {
+                println!("动画资源已就绪：{}", path.display());
+            })
+        }
         [command, percent] if command == "size" => set_size(pet, percent),
         _ => Err(format!(
             "用法：pet {name} | pet {name} size 50..150 | pet {name} prepare | pet {name} build"
@@ -119,7 +122,7 @@ fn toggle_pet(pet: &'static str) -> Result<(), String> {
         println!("{pet} 已关闭");
         return Ok(());
     }
-    assets::ensure(&assets::default_media())?;
+    assets::ensure(&assets::default_media()?)?;
     println!("{}", control::start_for(pet)?);
     Ok(())
 }
@@ -136,6 +139,27 @@ fn set_size(pet: &str, percent: &str) -> Result<(), String> {
     })?;
     println!("{pet} 大小已保存为 {value:.0}%");
     Ok(())
+}
+
+fn assets_dir(args: &[String]) -> Result<(), String> {
+    match args {
+        [] => {
+            println!("{}", settings::configured_assets_root()?.display());
+            Ok(())
+        }
+        [value] if value == "default" => {
+            let root = settings::set_assets_root("", true)?;
+            println!("素材目录已恢复默认：{}", root.display());
+            Ok(())
+        }
+        [value] => {
+            let root = settings::set_assets_root(value, false)?;
+            println!("素材目录已设为：{}", root.display());
+            println!("原有素材不会移动；重启桌宠后使用新目录。");
+            Ok(())
+        }
+        _ => Err("usage: pet assets-dir [目录|default]".into()),
+    }
 }
 
 fn download_all() -> Result<(), String> {
@@ -179,6 +203,7 @@ fn usage() {
          pet run <角色> --foreground      留在当前终端前台运行（调试用）\n\
          pet run <角色> [参数]           高级运行参数在前台执行\n\
          pet download <角色>|all         下载并校验原始 WebP 资源\n\
+         pet assets-dir [目录|default]   查看或设置素材存储根目录\n\
          pet stop <角色>                 停止指定角色\n\
          pet <角色>                      启动；已在运行时关闭\n\
          pet <角色> size 50..150         设置大小\n\

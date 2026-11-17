@@ -29,12 +29,13 @@ jobs:
       matrix:
         include:
           - name: x86_64
-            target: x86_64-unknown-linux-gnu
+            arch: x86_64
           - name: aarch64
-            target: aarch64-unknown-linux-gnu
+            arch: aarch64
     env:
       CARGO_BUILD_JOBS: '2'
       PET_ASSET_REPOSITORY: ${{ github.repository }}
+      RUST_TARGET: ${{ matrix.arch }}-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,8 +71,6 @@ jobs:
               stream.write(f'PET_ASSET_TAG={tag}\n')
           PY
       - name: Install Rust
-        env:
-          RUST_TARGET: ${{ matrix.target }}
         run: |
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
@@ -80,20 +79,16 @@ jobs:
         with:
           python-version: '3.13'
       - name: Test the shared engine and downloader
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.name == 'x86_64'
         run: |
           cargo test --workspace --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build compatible Linux binaries
-        env:
-          RUST_TARGET: ${{ matrix.target }}
         run: |
           python3 -m venv "$RUNNER_TEMP/zig-tools"
           "$RUNNER_TEMP/zig-tools/bin/pip" install cargo-zigbuild==0.24.1
           PATH="$RUNNER_TEMP/zig-tools/bin:$PATH" cargo zigbuild --release -p desktop-pet --locked --target "$RUST_TARGET.2.28"
       - name: Package programs without animation data
-        env:
-          RUST_TARGET: ${{ matrix.target }}
         run: python3 scripts/package-release.py --no-build --target "$RUST_TARGET" --output dist/programs
       - uses: actions/upload-artifact@v7.0.2
         with:

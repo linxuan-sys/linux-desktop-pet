@@ -50,6 +50,8 @@ The release entry point is the unified **`pet`** program. It contains no charact
 pet tui                    # choose, download, configure and start a pet
 pet run kimi               # download if needed, start in the background and return
 pet download kimi          # download and verify one character's original WebP files
+pet assets-dir             # print the configured asset root
+pet assets-dir /mnt/pet    # use a different asset root
 pet stop kimi              # stop that character
 pet kimi                   # toggle it
 pet kimi size 120          # save and hot-apply the scale
@@ -64,7 +66,7 @@ cd pet-0.1.0-x86_64
 pet tui
 ```
 
-Original WebP resources come from the independent [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) release. The downloader verifies the manifest, archive and every file with SHA-256, then stores the result under `~/.local/share/<pet>/assets/assets-v1/` for offline reuse. A requested clip is decoded on a background thread, cropped losslessly in memory, and kept in a bounded 32 MiB hot cache by default. The green-screen cleanup markers and original WebP bytes are preserved.
+Original WebP resources come from the independent [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) release. The downloader verifies the manifest, archive and every file with SHA-256, then stores the result under `<assets_root>/<pet>/assets/assets-v1/` for offline reuse. The default root is `$XDG_DATA_HOME` (usually `~/.local/share`); set another root with `pet assets-dir PATH`, or select **素材目录** in the TUI and press Enter. Enter `default` to reset. Existing files stay in the old root, and running pets use the new root after restart. A requested clip is decoded on a background thread, cropped losslessly in memory, and kept in a bounded 32 MiB hot cache by default. The green-screen cleanup markers and original WebP bytes are preserved.
 
 The compact TUI keeps a readable background on the selected pet row. Size and cache use visible `[-] value [+]` controls: `-`/`+` or left/right adjust, up/down selects a field, and Enter/Space toggles Alpha. `pet run <name> --foreground` is available for debugging; normal `pet run <name>` exits after download and leaves the pet running in the background.
 
@@ -323,6 +325,7 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 
 ```json
 {
+  "assets_root": null,
   "pets": {
     "claude-girl": {
       "scale": 1.0,
@@ -344,6 +347,7 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `assets_root` | `null` | Global root for downloaded character data. `null` uses `$XDG_DATA_HOME`; a string must be an absolute path or start with `~/`. |
 | `scale` | `1.0` | Size multiplier, `0.5`–`1.5`. `1.0` draws one buffer pixel per canvas pixel, i.e. no resampling. |
 | `cache_mib` | `32` | Lossless decoded-clip cache target in MiB, `16`–`512`. One active clip may exceed the target temporarily. |
 | `output` | `null` | Connector name to pin the pet to, e.g. `"DP-1"`. `null` follows the compositor. |
@@ -510,6 +514,8 @@ The source code in this repository is released under the **MIT License** — see
 pet tui                    # 选择、下载、设置并启停桌宠
 pet run kimi               # 首次使用时下载，后台启动后立即返回
 pet download kimi          # 下载并校验该角色的原始 WebP
+pet assets-dir             # 查看素材存储根目录
+pet assets-dir /mnt/pet    # 修改素材存储根目录
 pet stop kimi              # 停止该角色
 pet kimi                   # 启停切换
 pet kimi size 120          # 保存并热应用大小
@@ -524,7 +530,7 @@ cd pet-0.1.0-x86_64
 pet tui
 ```
 
-原始 WebP 从独立的 [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `~/.local/share/<角色>/assets/assets-v1/`，之后可离线复用。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
+原始 WebP 从独立的 [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `<素材根目录>/<角色>/assets/assets-v1/`，之后可离线复用。默认根目录是 `$XDG_DATA_HOME`（通常是 `~/.local/share`）；可用 `pet assets-dir 目录`，或在 TUI 中选择 **素材目录** 后按 Enter 修改。输入 `default` 可恢复默认。原有文件不会自动搬走，运行中的桌宠重启后使用新目录。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
 
 紧凑 TUI 的选中角色行有清晰背景高亮。大小和缓存显示为可操作的 `[-] 数值 [+]`：用 `-`/`+` 或左右键调整，用上下键选择项目，Enter/空格切换 Alpha。排查时可运行 `pet run <角色> --foreground`；普通 `pet run <角色>` 会在下载完成后退出终端阻塞，让桌宠留在后台。
 
@@ -783,6 +789,7 @@ cp pet.example.json ~/.config/pet/pet.json
 
 ```json
 {
+  "assets_root": null,
   "pets": {
     "claude-girl": {
       "scale": 1.0,
@@ -804,6 +811,7 @@ cp pet.example.json ~/.config/pet/pet.json
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
+| `assets_root` | `null` | 全局素材数据根目录。`null` 使用 `$XDG_DATA_HOME`；字符串必须是绝对路径或以 `~/` 开头。 |
 | `scale` | `1.0` | 大小倍数，`0.5`–`1.5`。`1.0` 表示一个缓冲区像素对应一个画布像素，即不重采样。 |
 | `cache_mib` | `32` | 无损解码片段的目标内存预算（MiB），`16`–`512`。单个正在使用的动作可能暂时超出目标值。 |
 | `output` | `null` | 固定到某个输出，例如 `"DP-1"`。`null` 跟随合成器。 |

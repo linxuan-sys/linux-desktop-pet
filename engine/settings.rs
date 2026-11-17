@@ -5,6 +5,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
+    /// Root containing one data directory per character. Keeping this global
+    /// lets downloads and the runtime resolve the same location.
+    pub assets_root: PathBuf,
     pub scale: f64,
     pub cache_mib: usize,
     pub output: Option<String>,
@@ -26,6 +29,7 @@ impl Settings {
         if raw["pets"].get(pet).is_some_and(|v| !v.is_object()) {
             return Err("pet configuration must be an object".into());
         }
+        let assets_root = parse_assets_root(raw.get("assets_root"))?;
         let section = &raw["pets"][pet];
         let scale = match section.get("scale") {
             None => 1.0,
@@ -62,6 +66,7 @@ impl Settings {
             }
         }
         Ok(Self {
+            assets_root,
             scale,
             cache_mib,
             output,
@@ -78,6 +83,83 @@ fn xdg(key: &str, fallback: &str) -> PathBuf {
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback)
         })
 }
+pub fn default_assets_root() -> PathBuf {
+    xdg("XDG_DATA_HOME", ".local/share")
+}
+
+fn expand_home(value: &str) -> PathBuf {
+    if value == "~" {
+        return PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        return PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(rest);
+    }
+    PathBuf::from(value)
+}
+
+fn parse_assets_root(value: Option<&Value>) -> Result<PathBuf, String> {
+    match value {
+        None | Some(Value::Null) => Ok(default_assets_root()),
+        Some(Value::String(value)) if !value.trim().is_empty() => {
+            let path = expand_home(value.trim());
+            if !path.is_absolute() {
+                return Err("assets_root must be an absolute path or start with ~/".into());
+            }
+            Ok(path)
+        }
+        _ => Err("assets_root must be a nonempty absolute path string or null".into()),
+    }
+}
+
+pub fn configured_assets_root() -> Result<PathBuf, String> {
+    let path = config_path();
+    let raw: Value = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|error| format!("{}: {error}", path.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Value::Null,
+        Err(error) => return Err(error.to_string()),
+    };
+    if !raw.is_object() && !raw.is_null() {
+        return Err("configuration root must be an object".into());
+    }
+    parse_assets_root(raw.get("assets_root"))
+}
+
+#[cfg(feature = "unified")]
+pub fn resolve_assets_root_input(value: &str) -> Result<PathBuf, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("素材目录不能为空".into());
+    }
+    let path = expand_home(value);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|error| error.to_string())?
+            .join(path)
+    };
+    std::fs::create_dir_all(&path)
+        .map_err(|error| format!("无法创建素材目录 {}: {error}", path.display()))?;
+    path.canonicalize().map_err(|error| error.to_string())
+}
+
+#[cfg(feature = "unified")]
+pub fn set_assets_root(value: &str, reset: bool) -> Result<PathBuf, String> {
+    if reset {
+        update_for(crate::character::selected(), |raw| {
+            raw["assets_root"] = Value::Null
+        })?;
+        return Ok(default_assets_root());
+    }
+    let root = resolve_assets_root_input(value)?;
+    let saved = root.to_string_lossy().into_owned();
+    update_for(crate::character::selected(), |raw| {
+        raw["assets_root"] = Value::String(saved)
+    })?;
+    Ok(root)
+}
+
 pub fn config_path() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("pet/pet.json")
 }
@@ -250,6 +332,27 @@ mod tests {
         assert_eq!(s.scale, 0.75);
         assert_eq!(s.click[0], "");
     }
+
+    #[test]
+    fn assets_root_accepts_absolute_paths_and_rejects_relative_ones() {
+        let root = default_assets_root();
+        let configured = serde_json::json!({
+            "assets_root": root,
+            "pets": {}
+        });
+        assert_eq!(
+            Settings::parse_for(&configured, crate::character::selected())
+                .unwrap()
+                .assets_root,
+            root
+        );
+        let relative = serde_json::json!({
+            "assets_root": "relative/path",
+            "pets": {}
+        });
+        assert!(Settings::parse_for(&relative, crate::character::selected()).is_err());
+    }
+
     #[test]
     fn corrupt_hot_reload_retains_last_valid_configuration() {
         let dir = tempfile::tempdir().unwrap();
