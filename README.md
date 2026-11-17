@@ -390,6 +390,8 @@ pointer grab ─────► drag reaction ─┘
 - **Walking.** The window is stationary before and after the run window, interpolates its position during the run, and clamps at the screen edges.
 - **Renderer.** The unified program keeps the original WebP sheet unchanged, decodes one requested clip on a background thread, crops each frame to its alpha bounds, and retains a bounded lossless hot cache. The source sheet is released after cropping.
 
+Compressed frame buffers discard unused capacity, and the cache budget counts their allocated capacity. On glibc Linux, cold loads and cache evictions also return unused allocator pages to the OS; per-frame cache hits do not trigger this work. `cache_mib` limits retained frame storage, not total process RSS: the allocator may retain fragmented pages, and cold decoding still needs a temporary 105 MiB source image plus decoder workspace.
+
 ### Animation format
 
 Each file in `<pet>/media/anim/` is a WebP sprite sheet:
@@ -862,6 +864,14 @@ cp pet.example.json ~/.config/pet/pet.json
 - **模式。** 聚焦终端时跑固定 50 秒循环：发呆、发呆、写代码、发呆、听音乐。否则走七步清醒日程：发呆、发呆、随机、发呆、发呆、随机、走路。
 - **走路。** 奔跑窗口之前和之后窗口不动，窗口内插值移动，碰到屏幕边缘 clamp。
 - **渲染器。** 统一程序保持原始 WebP 不变，在后台线程一次解码一个所需动作，把每帧裁到 alpha 边界，并保留有上限的无损热缓存；裁剪完成后即释放完整源图。
+
+压缩帧会收缩多余容量，缓存预算按实际分配容量统计。在使用 glibc 的 Linux 上，首次加载动作和缓存淘汰还会将分配器中的空闲页归还系统；逐帧命中缓存时不执行回收。`cache_mib` 限制的是保留的帧数据，并非进程 RSS 总上限：碎片化页面可能继续驻留，冷解码仍需要临时的 105 MiB 源图及解码器工作内存。
+
+可单独运行真实素材的内存回归检查（连续切换 16 个 DSH 动作，使用 16 MiB 缓存预算）：
+
+```bash
+cargo test -p desktop-pet real_clip_switches_keep_resident_memory_bounded -- --ignored --nocapture
+```
 
 ### 动画格式
 

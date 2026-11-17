@@ -2,6 +2,19 @@
 use super::*;
 use std::path::PathBuf;
 
+fn release_unused_decode_memory() {
+    // glibc's worker-thread arena retains source-decoder scratch after free.
+    // Return unused pages after cache changes, never on each displayed frame.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // SAFETY: malloc_trim takes no pointers and supports concurrent callers.
+    unsafe {
+        unsafe extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        malloc_trim(0);
+    }
+}
+
 struct Clip {
     entries: Vec<Entry>,
     frames: Vec<Vec<u8>>,
@@ -41,8 +54,11 @@ impl Clip {
                     p.fill(0);
                 }
             }
-            let encoded = encoder.compress(&pixels).map_err(|e| e.to_string())?;
-            bytes += encoded.len();
+            let mut encoded = encoder.compress(&pixels).map_err(|e| e.to_string())?;
+            // zstd reserves compress_bound(raw size), which can be much larger
+            // than the result. Keep only compressed storage in the hot cache.
+            encoded.shrink_to_fit();
+            bytes += encoded.capacity();
             entries.push(Entry {
                 x: f.x,
                 y: f.y,
@@ -133,7 +149,7 @@ impl ClipCache {
             return Err("frame index out of range".into());
         }
         let budget = self.budget.load(Ordering::Relaxed);
-        if !self.clips.contains_key(name) {
+        let changed = if !self.clips.contains_key(name) {
             // Make room BEFORE decoding a 105 MiB source, not afterwards.
             let reserve = budget.min(16 * 1048576);
             while self.bytes > budget.saturating_sub(reserve) && self.evict(None) {}
@@ -143,10 +159,18 @@ impl ClipCache {
             self.bytes += clip.bytes;
             self.clips.insert(name.into(), clip);
             self.order.push_back(name.into());
+            true
         } else {
-            while self.bytes > budget && self.evict(Some(name)) {}
+            let mut evicted = false;
+            while self.bytes > budget && self.evict(Some(name)) {
+                evicted = true;
+            }
             self.order.retain(|n| n != name);
             self.order.push_back(name.into());
+            evicted
+        };
+        if changed {
+            release_unused_decode_memory();
         }
         self.published_bytes.store(self.bytes, Ordering::Relaxed);
         self.clips[name].frame(name, index, &mut self.decoder)
@@ -307,6 +331,21 @@ mod tests {
         }
     }
     #[test]
+    fn compressed_cache_does_not_retain_uncompressed_buffer_capacity() {
+        let clip = Clip::from_anim(animation()).unwrap();
+        let allocated: usize = clip.frames.iter().map(Vec::capacity).sum();
+        let compressed: usize = clip.frames.iter().map(Vec::len).sum();
+        assert_eq!(
+            allocated, compressed,
+            "cache must discard compression scratch capacity"
+        );
+        assert_eq!(
+            clip.bytes, allocated,
+            "cache budget must include allocated capacity"
+        );
+    }
+
+    #[test]
     fn cropped_cache_preserves_visible_pixels_alpha_mirroring_and_premultiply() {
         let anim = animation();
         let mut expected = Canvas::new(WINDOW_W, WINDOW_H);
@@ -356,6 +395,55 @@ mod tests {
         assert_eq!(published.load(Ordering::Relaxed), cache.bytes);
         assert!(cache.frame("active", COUNT as u32).is_err());
     }
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires repository DSH assets; run alone to measure process RSS"]
+    fn real_clip_switches_keep_resident_memory_bounded() {
+        let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dsh-girl/media");
+        let mut sheet = Sheet::load(&media, 16).unwrap();
+        fn rss() -> usize {
+            std::fs::read_to_string("/proc/self/smaps_rollup")
+                .unwrap()
+                .lines()
+                .find(|l| l.starts_with("Rss:"))
+                .unwrap()
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .parse::<usize>()
+                .unwrap()
+                * 1024
+        }
+        let baseline = rss();
+        let mut max_resident = baseline;
+        let mut max_cached = 0;
+        let all = names(&media).unwrap();
+        assert!(all.len() >= 16, "need 16 distinct clips for cache churn");
+        for name in all.iter().take(16) {
+            let start = Instant::now();
+            while !sheet.ready(name) {
+                assert!(start.elapsed().as_secs() < 30, "clip load timed out");
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            assert!(!sheet.failed.contains(name), "clip failed to load: {name}");
+            max_resident = max_resident.max(rss());
+            max_cached = max_cached.max(sheet.bytes());
+        }
+        let growth = max_resident.saturating_sub(baseline);
+        println!(
+            "16 cold clips: {:.2} MiB max RSS after load, {:.2} MiB cache, {:.2} MiB RSS growth",
+            max_resident as f64 / 1048576.,
+            max_cached as f64 / 1048576.,
+            growth as f64 / 1048576.
+        );
+        // Allow decoder and allocator overhead above retained frame storage,
+        // while catching growth toward 100 MiB after repeated cold loads.
+        assert!(
+            growth <= max_cached + 64 * 1048576,
+            "resident growth exceeds cached data plus 64 MiB of decoder/allocator overhead"
+        );
+    }
+
     #[test]
     #[ignore = "requires repository original WebP assets"]
     fn real_raw_clips_match_existing_processed_renderer_and_never_write_sources() {
