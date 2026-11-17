@@ -164,8 +164,15 @@ fn has_webp(directory: &Path) -> bool {
     })
 }
 
-fn usable_local_media(path: &Path) -> bool {
+pub fn usable_local_media(path: &Path) -> bool {
     has_webp(&path.join("anim"))
+}
+
+pub fn library_media(root: &Path, pet: &str) -> Option<PathBuf> {
+    [root.join(pet).join("media"), root.join(pet)]
+        .into_iter()
+        .find(|path| usable_local_media(path))
+        .map(|path| canonical_media(&path))
 }
 
 fn canonical_media(path: &Path) -> PathBuf {
@@ -178,19 +185,22 @@ fn push_ancestor_candidates(candidates: &mut Vec<PathBuf>, start: &Path, pet: &s
     }
 }
 
-fn repository_candidates(pet: &str) -> Vec<PathBuf> {
+fn repository_candidates(pet: &str) -> Result<Vec<PathBuf>, String> {
     let mut candidates = Vec::new();
+    if let Ok(current) = std::env::current_dir() {
+        push_ancestor_candidates(&mut candidates, &current, pet);
+    }
+    if let Some(remembered) = crate::settings::registered_media_dir(pet)? {
+        candidates.push(remembered);
+    }
     if let Ok(exe) = std::env::current_exe()
         && let Some(directory) = exe.parent()
     {
         push_ancestor_candidates(&mut candidates, directory, pet);
     }
-    if let Ok(current) = std::env::current_dir() {
-        push_ancestor_candidates(&mut candidates, &current, pet);
-    }
     let mut seen = HashSet::new();
     candidates.retain(|candidate| seen.insert(canonical_media(candidate)));
-    candidates
+    Ok(candidates)
 }
 
 fn managed_media_for(pet: &str) -> Option<MediaLocation> {
@@ -234,13 +244,28 @@ pub fn resolve_media_for(
             Err(format!("手动素材目录不可用：{}", path.display()))
         };
     }
-    if let Some(path) = repository_candidates(pet)
+    if let Some(root) = crate::settings::custom_assets_root()? {
+        if let Some(path) = library_media(&root, pet) {
+            return Ok(Some(MediaLocation {
+                path,
+                source: MediaSource::Explicit,
+            }));
+        }
+        return Ok(managed_media_for(pet));
+    }
+    if let Some(path) = repository_candidates(pet)?
         .into_iter()
         .find(|candidate| usable_local_media(candidate))
     {
         return Ok(Some(MediaLocation {
             path: canonical_media(&path),
             source: MediaSource::Repository,
+        }));
+    }
+    if let Some(path) = library_media(&crate::settings::configured_assets_root()?, pet) {
+        return Ok(Some(MediaLocation {
+            path,
+            source: MediaSource::Explicit,
         }));
     }
     Ok(managed_media_for(pet))
@@ -250,6 +275,9 @@ pub fn resolve_media_for(
 /// and download exactly once when no local copy exists.
 pub fn prepare_media_for(pet: &str, explicit: Option<&Path>) -> Result<MediaLocation, String> {
     if let Some(media) = resolve_media_for(pet, explicit)? {
+        if media.source == MediaSource::Repository {
+            crate::settings::remember_repository_media(pet, &media.path)?;
+        }
         return Ok(media);
     }
     let path = download_for(pet)?;
@@ -441,6 +469,10 @@ fn download(
         }
         return Ok(store.to_path_buf());
     }
+    #[cfg(feature = "unified")]
+    if crate::control::pet_running(pet) {
+        return Err("素材有更新，请先停止对应伙伴再更新，避免混用新旧文件。".into());
+    }
     if let Some(progress) = progress {
         let _ = progress.send(Progress::Download {
             received: 0,
@@ -510,10 +542,26 @@ fn download(
         file.write_all(content).map_err(|e| e.to_string())?;
         file.sync_all().map_err(|e| e.to_string())?;
     }
+    let backup = tempfile::Builder::new()
+        .prefix(".previous-assets-")
+        .tempdir_in(parent)
+        .map_err(|e| e.to_string())?;
+    let previous = backup.path().join("previous");
     if store.exists() {
-        std::fs::remove_dir_all(store).map_err(|e| e.to_string())?;
+        std::fs::rename(store, &previous).map_err(|e| e.to_string())?;
     }
-    std::fs::rename(incoming.path(), store).map_err(|e| e.to_string())?;
+    if let Err(error) = std::fs::rename(incoming.path(), store) {
+        if previous.exists()
+            && let Err(restore) = std::fs::rename(&previous, store)
+        {
+            let retained = backup.keep();
+            return Err(format!(
+                "安装失败：{error}；还原失败：{restore}；旧素材保留在 {}",
+                retained.display()
+            ));
+        }
+        return Err(error.to_string());
+    }
     File::open(parent)
         .and_then(|f| f.sync_all())
         .map_err(|e| e.to_string())?;

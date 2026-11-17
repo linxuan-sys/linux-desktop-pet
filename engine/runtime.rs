@@ -167,6 +167,8 @@ fn run(
         config.current.cache_mib
     );
     let mut pet = Pet::new();
+    #[cfg(feature = "unified")]
+    let mut startup_ready = false;
     pet.apply(&DerivedState {
         mode: "awake".into(),
         spotify_playing: false,
@@ -296,6 +298,11 @@ fn run(
         }
         if dirty && host.present(&canvas)? {
             dirty = false;
+            #[cfg(feature = "unified")]
+            if playing && !startup_ready {
+                crate::control::mark_ready()?;
+                startup_ready = true;
+            }
         }
         std::thread::sleep(Duration::from_millis(TICK_MS));
     }

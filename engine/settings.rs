@@ -149,9 +149,35 @@ pub fn configured_assets_root() -> Result<PathBuf, String> {
     parse_assets_root(raw.get("assets_root"))
 }
 
+pub fn custom_assets_root() -> Result<Option<PathBuf>, String> {
+    let raw = read_config()?;
+    if raw.get("assets_root").is_none_or(Value::is_null) {
+        return Ok(None);
+    }
+    parse_assets_root(raw.get("assets_root")).map(Some)
+}
+
 pub fn configured_media_dir(pet: &str) -> Result<Option<PathBuf>, String> {
     let raw = read_config()?;
     parse_media_dir(raw["pets"][pet].get("media_dir"))
+}
+
+pub fn registered_media_dir(pet: &str) -> Result<Option<PathBuf>, String> {
+    let raw = read_config()?;
+    if raw
+        .get("local_media")
+        .is_some_and(|value| !value.is_object() && !value.is_null())
+    {
+        return Err("local_media must be an object".into());
+    }
+    parse_media_dir(raw["local_media"].get(pet))
+}
+
+pub fn remember_repository_media(pet: &str, path: &Path) -> Result<(), String> {
+    if registered_media_dir(pet)?.as_deref() == Some(path) {
+        return Ok(());
+    }
+    update_for(pet, |raw| raw["local_media"][pet] = serde_json::json!(path))
 }
 
 #[cfg(feature = "unified")]
@@ -195,14 +221,28 @@ pub fn resolve_media_dir_input(value: &str) -> Result<PathBuf, String> {
 pub fn set_assets_root(value: &str, reset: bool) -> Result<PathBuf, String> {
     if reset {
         update_for(crate::character::selected(), |raw| {
-            raw["assets_root"] = Value::Null
+            raw["assets_root"] = Value::Null;
+            if let Some(pets) = raw.get_mut("pets").and_then(Value::as_object_mut) {
+                for section in pets.values_mut() {
+                    if let Some(section) = section.as_object_mut() {
+                        section.remove("media_dir");
+                    }
+                }
+            }
         })?;
         return Ok(default_assets_root());
     }
     let root = resolve_assets_root_input(value)?;
     let saved = root.to_string_lossy().into_owned();
     update_for(crate::character::selected(), |raw| {
-        raw["assets_root"] = Value::String(saved)
+        raw["assets_root"] = Value::String(saved);
+        if let Some(pets) = raw.get_mut("pets").and_then(Value::as_object_mut) {
+            for section in pets.values_mut() {
+                if let Some(section) = section.as_object_mut() {
+                    section.remove("media_dir");
+                }
+            }
+        }
     })?;
     Ok(root)
 }

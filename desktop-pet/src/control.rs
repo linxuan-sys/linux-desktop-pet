@@ -32,7 +32,7 @@ fn lock_path_for(pet: &str) -> PathBuf {
     directory_for(pet).join("instance.lock")
 }
 
-fn read_pid_for(pet: &str) -> Option<u32> {
+pub fn read_pid_for(pet: &str) -> Option<u32> {
     let pid = std::fs::read_to_string(pid_path_for(pet))
         .ok()?
         .trim()
@@ -52,11 +52,6 @@ fn read_pid_for(pet: &str) -> Option<u32> {
             .is_some_and(|name| name == "pet")
     }))
     .then_some(pid)
-}
-
-#[cfg(test)]
-pub fn running() -> bool {
-    read_pid_for(character::selected()).is_some()
 }
 
 pub fn pet_running(pet: &str) -> bool {
@@ -104,12 +99,42 @@ pub fn start_for_media(pet: &str, media: &Path) -> Result<String, String> {
             Ok(())
         });
     }
-    let child = command.spawn().map_err(|error| error.to_string())?;
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
     if let Err(error) = write_pid_for(pet, child.id()) {
         let _ = unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
         return Err(error);
     }
-    Ok(format!("已启动 · PID {}", child.id()))
+    let pid = child.id();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(format!("已启动 · PID {pid}"))
+}
+
+pub fn running_media(pet: &str) -> Option<PathBuf> {
+    let pid = read_pid_for(pet)?;
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let args: Vec<_> = bytes.split(|b| *b == 0).collect();
+    args.windows(2)
+        .find(|pair| pair[0] == b"--media-dir")
+        .map(|pair| PathBuf::from(String::from_utf8_lossy(pair[1]).into_owned()))
+}
+
+pub fn host_ready(pet: &str) -> bool {
+    read_pid_for(pet).is_some_and(|pid| {
+        std::fs::read_to_string(directory_for(pet).join("ready.pid"))
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            == Some(pid)
+    })
+}
+
+pub fn mark_ready() -> Result<(), String> {
+    std::fs::write(
+        directory_for(character::selected()).join("ready.pid"),
+        std::process::id().to_string(),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn write_pid_for(pet: &str, pid: u32) -> Result<(), String> {
@@ -178,6 +203,7 @@ impl InstanceGuard {
         if read_pid_for(pet).is_some_and(|running| running != pid) {
             return Err(format!("{pet} is already running"));
         }
+        let _ = std::fs::remove_file(directory_for(pet).join("ready.pid"));
         write_pid_for(pet, pid)?;
         Ok(Self {
             path,
@@ -203,8 +229,6 @@ mod tests {
     use super::*;
     #[test]
     fn missing_or_stale_pid_is_not_running() {
-        let path = pid_path();
-        let _ = std::fs::remove_file(path);
-        assert!(!running());
+        assert!(read_pid_for("nonexistent-control-test-pet").is_none());
     }
 }

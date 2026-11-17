@@ -156,7 +156,23 @@ fn assets_dir(args: &[String]) -> Result<(), String> {
             println!("原有素材不会移动；重启桌宠后使用新目录。");
             Ok(())
         }
-        _ => Err("usage: pet assets-dir [目录|default]".into()),
+        [pet, value] => {
+            let pet = character::select(pet)?;
+            if value == "default" {
+                settings::set_media_dir(pet, "", true)?;
+                println!("{pet} 已恢复自动选择素材");
+            } else {
+                let path = settings::resolve_media_dir_input(value)?;
+                assets::resolve_media_for(pet, Some(&path))?;
+                settings::set_media_dir(pet, &path.to_string_lossy(), false)?;
+                println!("{pet} 素材目录：{}", path.display());
+            }
+            Ok(())
+        }
+        _ => Err(
+            "usage: pet assets-dir [目录|default] | pet assets-dir <角色> <media目录|default>"
+                .into(),
+        ),
     }
 }
 
@@ -217,6 +233,7 @@ fn usage() {
          pet run <角色> [参数]           高级运行参数在前台执行\n\
          pet download <角色>|all         下载并校验原始 WebP 资源\n\
          pet assets-dir [目录|default]   查看或设置素材存储根目录\n\
+         pet assets-dir <角色> <目录>   直接使用该角色的本地 media 目录\n\
          pet stop <角色>                 停止指定角色\n\
          pet <角色>                      启动；已在运行时关闭\n\
          pet <角色> size 50..150         设置大小\n\
