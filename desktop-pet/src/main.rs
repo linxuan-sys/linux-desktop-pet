@@ -44,7 +44,24 @@ fn dispatch(args: &[String]) -> Result<(), String> {
             let Some(name) = args.get(1) else {
                 return Err("usage: pet run <角色> [参数]".into());
             };
-            character::select(name).and_then(|_| runtime::entry(&args[2..]))
+            let pet = character::select(name)?;
+            let options = &args[2..];
+            if std::env::var_os("PET_RUN_FOREGROUND").is_some()
+                || options.first().is_some_and(|arg| arg == "--foreground")
+            {
+                let options = if options.first().is_some_and(|arg| arg == "--foreground") {
+                    &options[1..]
+                } else {
+                    options
+                };
+                return runtime::entry(options);
+            }
+            if options.is_empty() {
+                assets::download_cli()?;
+                println!("{}", control::start_for(pet)?);
+                return Ok(());
+            }
+            runtime::entry(options)
         }
         Some("download") => {
             let Some(name) = args.get(1) else {
@@ -158,7 +175,9 @@ fn build() -> Result<(), String> {
 fn usage() {
     println!(
         "pet tui                         打开设置与下载 TUI\n\
-         pet run <角色> [参数]           直接启动指定角色\n\
+         pet run <角色>                   下载后后台启动并立即返回\n\
+         pet run <角色> --foreground      留在当前终端前台运行（调试用）\n\
+         pet run <角色> [参数]           高级运行参数在前台执行\n\
          pet download <角色>|all         下载并校验原始 WebP 资源\n\
          pet stop <角色>                 停止指定角色\n\
          pet <角色>                      启动；已在运行时关闭\n\

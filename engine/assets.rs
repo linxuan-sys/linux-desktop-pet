@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -188,6 +188,19 @@ pub fn installed(pet: &str) -> Option<PathBuf> {
 }
 
 pub fn ensure(media: &Path) -> Result<PathBuf, String> {
+    if io::stderr().is_terminal() {
+        let media = media.to_path_buf();
+        let (sender, progress) = channel();
+        let worker = std::thread::spawn(move || ensure_inner(&media, Some(&sender)));
+        render_cli_progress(progress);
+        return worker
+            .join()
+            .map_err(|_| "resource download worker panicked".to_string())?;
+    }
+    ensure_inner(media, None)
+}
+
+fn ensure_inner(media: &Path, progress: Option<&ProgressSender>) -> Result<PathBuf, String> {
     let config = media.join("resources.json");
     // Explicit/local source directories retain their existing processing rules.
     if !config.exists()
@@ -211,7 +224,91 @@ pub fn ensure(media: &Path) -> Result<PathBuf, String> {
         .ok_or("invalid user data directory")?
         .join("assets")
         .join(&source.tag);
-    download(&source, &base, &store, crate::character::selected(), None)
+    download(
+        &source,
+        &base,
+        &store,
+        crate::character::selected(),
+        progress,
+    )
+}
+
+fn render_cli_progress(progress: Receiver<Progress>) {
+    let started = Instant::now();
+    let mut last_render = Instant::now() - Duration::from_secs(1);
+    let mut received = 0;
+    let mut total = 0;
+    let mut verifying = false;
+    let mut displayed = false;
+
+    for update in progress {
+        match update {
+            Progress::Manifest => {
+                eprint!("\r\x1b[2K  正在获取动画资源清单…");
+                flush_stderr();
+                displayed = true;
+                last_render = Instant::now();
+            }
+            Progress::Download {
+                received: next,
+                total: size,
+            } => {
+                received = next;
+                total = size;
+                verifying = false;
+                displayed |= total > 0;
+            }
+            Progress::Verify => {
+                verifying = true;
+                eprint!("\r\x1b[2K  下载完成，正在逐文件校验…");
+                flush_stderr();
+                displayed = true;
+                last_render = Instant::now();
+            }
+        }
+        if !verifying && last_render.elapsed() >= Duration::from_millis(100) {
+            render_cli_bar(received, total, started.elapsed());
+            last_render = Instant::now();
+        }
+    }
+    if !verifying && total > 0 {
+        render_cli_bar(received, total, started.elapsed());
+    }
+    if displayed {
+        eprintln!();
+    }
+}
+
+fn render_cli_bar(received: u64, total: u64, elapsed: Duration) {
+    let ratio = (received as f64 / total.max(1) as f64).clamp(0.0, 1.0);
+    let width = 24usize;
+    let filled = (ratio * width as f64).round() as usize;
+    let bar = format!(
+        "{}{}",
+        "━".repeat(filled),
+        "─".repeat(width.saturating_sub(filled))
+    );
+    let seconds = elapsed.as_secs_f64().max(0.001);
+    let rate = received as f64 / 1048576.0 / seconds;
+    let remaining = total.saturating_sub(received) as f64 / 1048576.0 / rate.max(0.001);
+    eprint!(
+        "\r\x1b[2K  [{bar}] {:>6.1}/{:>6.1} MiB  {:>3.0}%  {:>5.1} MiB/s  ETA {}",
+        received as f64 / 1048576.0,
+        total as f64 / 1048576.0,
+        ratio * 100.0,
+        rate,
+        format_eta(remaining)
+    );
+    flush_stderr();
+}
+
+fn format_eta(seconds: f64) -> String {
+    let seconds = seconds.ceil().clamp(0.0, 99.0 * 60.0 + 59.0) as u64;
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
+}
+
+fn flush_stderr() {
+    let _ = io::stderr().flush();
 }
 
 #[cfg(feature = "unified")]
@@ -435,6 +532,13 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     const PET: &str = "kimi-girl";
+
+    #[test]
+    fn cli_eta_is_bounded_and_readable() {
+        assert_eq!(format_eta(9.1), "00:10");
+        assert_eq!(format_eta(125.0), "02:05");
+        assert_eq!(format_eta(10_000.0), "99:59");
+    }
 
     fn bundle() -> (Source, Manifest, Vec<u8>) {
         let source = Source::default();

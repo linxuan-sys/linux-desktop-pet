@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 const LOCK_WAIT_ENV: &str = "DESKTOP_PET_LOCK_WAIT";
+const FOREGROUND_ENV: &str = "PET_RUN_FOREGROUND";
 
 fn directory_for(pet: &str) -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
@@ -87,6 +88,7 @@ pub fn start_for(pet: &str) -> Result<String, String> {
         .arg("run")
         .arg(pet)
         .env(LOCK_WAIT_ENV, "1")
+        .env(FOREGROUND_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::from(
             log.try_clone().map_err(|error| error.to_string())?,

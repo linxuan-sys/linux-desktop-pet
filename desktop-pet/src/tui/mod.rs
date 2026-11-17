@@ -10,7 +10,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Wrap};
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal};
 use std::sync::mpsc::{self, Receiver};
@@ -227,13 +227,21 @@ impl App {
                 Focus::Pets => self.selected = (self.selected + 1).min(character::PETS.len() - 1),
                 Focus::Settings => self.field = (self.field + 1).min(2),
             },
-            KeyCode::Left | KeyCode::Char('h') if self.focus == Focus::Settings => self.change(-1),
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(' ')
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('-')
+                if self.focus == Focus::Settings =>
+            {
+                self.change(-1)
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('+') | KeyCode::Char('=')
                 if self.focus == Focus::Settings =>
             {
                 self.change(1)
             }
-            KeyCode::Enter if self.focus == Focus::Settings => self.change(1),
+            KeyCode::Enter | KeyCode::Char(' ') if self.focus == Focus::Settings => {
+                if self.field == 2 {
+                    self.change(1);
+                }
+            }
             KeyCode::Enter | KeyCode::Char('s') => self.toggle(),
             KeyCode::Char('d') => self.download(false),
             _ => {}
@@ -369,9 +377,11 @@ fn draw(frame: &mut ratatui::Frame, app: &App, running: &BTreeMap<&str, bool>) {
         );
     }
     frame.render_widget(
-        Paragraph::new("↑↓ 选择   Tab 切换面板   ←→ 调整   d 下载   Enter/s 启停   q 退出")
-            .alignment(Alignment::Center)
-            .style(theme.dim(DIM)),
+        Paragraph::new(
+            "↑↓ 选项   Tab 面板   ←→/-/+ 调整   空格切换 Alpha   d 下载   Enter/s 启停   q 退出",
+        )
+        .alignment(Alignment::Center)
+        .style(theme.dim(DIM)),
         vertical[3],
     );
 }
@@ -407,7 +417,8 @@ fn draw_pets(frame: &mut ratatui::Frame, area: Rect, app: &App, running: &BTreeM
     } else {
         app.theme.dim(DIM)
     };
-    frame.render_widget(
+    let mut state = ListState::default().with_selected(Some(app.selected));
+    frame.render_stateful_widget(
         List::new(items.collect::<Vec<_>>())
             .block(
                 Block::default()
@@ -418,6 +429,7 @@ fn draw_pets(frame: &mut ratatui::Frame, area: Rect, app: &App, running: &BTreeM
             .highlight_style(app.theme.selection().add_modifier(Modifier::BOLD))
             .highlight_symbol("❯ "),
         area,
+        &mut state,
     );
 }
 
@@ -439,12 +451,12 @@ fn draw_settings(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .as_ref()
         .map(|values| {
             [
-                format!("{:.0}%", values.scale * 100.0),
-                format!("{} MiB", values.cache_mib),
+                format!("[-]  {:.0}%  [+]", values.scale * 100.0),
+                format!("[-]  {} MiB  [+]", values.cache_mib),
                 if values.premultiply {
-                    "开启 · 推荐".into()
+                    "[切换]  开启 · 推荐".into()
                 } else {
-                    "关闭 · 保留原色".into()
+                    "[切换]  关闭 · 保留原色".into()
                 },
             ]
         })
@@ -519,7 +531,17 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         let compact = content.split_whitespace().collect::<String>();
-        for text in ["PET", "Claude", "Kimi", "动作缓存", "32MiB", "Tab", "下载"] {
+        for text in [
+            "PET",
+            "Claude",
+            "Kimi",
+            "动作缓存",
+            "[-]",
+            "[+]",
+            "MiB",
+            "Tab",
+            "下载",
+        ] {
             let needle = text.split_whitespace().collect::<String>();
             assert!(compact.contains(&needle), "missing {text}\n{content}");
         }
@@ -539,6 +561,24 @@ mod tests {
                 .content()
                 .iter()
                 .all(|cell| cell.bg != ratatui::style::Color::Rgb(0x14, 0x15, 0x1c))
+        );
+    }
+
+    #[test]
+    fn selected_pet_row_has_a_background_highlight() {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = App::new();
+        app.theme = Theme::True;
+        let running = BTreeMap::new();
+        terminal.draw(|frame| draw(frame, &app, &running)).unwrap();
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .any(|cell| cell.bg == ratatui::style::Color::Rgb(0x24, 0x27, 0x33))
         );
     }
 }

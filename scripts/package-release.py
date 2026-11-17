@@ -19,7 +19,10 @@ def package(args, target, binary_dir):
     product_name = 'pet'
     binary = binary_dir / 'pet'
     version = re.search(r'^version\s*=\s*"([^"]+)"', (ROOT / crate_name / 'Cargo.toml').read_text(), re.M)[1]
-    label = f'{product_name}-{version}-{target}'
+    arch = {'x86_64': 'x86_64', 'aarch64': 'aarch64'}.get(target.split('-')[0])
+    if not arch:
+        raise RuntimeError(f'Unsupported release architecture: {target}')
+    label = f'{product_name}-{version}-{arch}'
     stage = args.output / label
     if stage.exists():
         shutil.rmtree(stage)
@@ -27,9 +30,6 @@ def package(args, target, binary_dir):
     shutil.copy2(binary, stage / 'bin' / product_name)
     source = {'version': 1, 'repository': args.repository, 'tag': args.asset_tag}
     (stage / 'resources.json').write_text(json.dumps(source, indent=2) + '\n')
-    arch = {'x86_64': 'x86_64', 'aarch64': 'aarch64'}.get(target.split('-')[0])
-    if not arch:
-        raise RuntimeError(f'Unsupported release architecture: {target}')
     for script in ('run.sh', 'install.sh', 'pet-launch'):
         text = (ROOT / 'scripts' / 'packaging' / script).read_text().replace('@ARCH@', arch)
         (stage / script).write_text(text)
