@@ -191,8 +191,9 @@ target/release/kimi-girl
 
 ### Prepare the animation assets (optional)
 
-Original artwork remains in `<pet>/media/anim/*.webp`; the optional disk frame cache is generated separately. Clone and source runs use
-the existing files without copying or generating a multi-gigabyte atlas.
+Original artwork remains in `<pet>/media/anim/*.webp`; source runs use it without copying.
+`prepare` validates the originals. Optional disk frame files are generated separately
+when requested with `pet cache`.
 
 `prepare` remains available as the one-time download and validation entry:
 
@@ -688,8 +689,8 @@ target/release/kimi-girl
 
 ### 准备动画素材（可选）
 
-所有渲染器都直接使用 `<pet>/media/anim/*.webp`。从源码仓库运行时不会复制
-素材，也不会生成数 GiB 的额外图集。
+原始素材保留在 `<pet>/media/anim/*.webp`，源码运行直接使用，不复制原图。
+`prepare` 校验原始素材；可选的磁盘分帧缓存由 `pet cache` 单独按需生成。
 
 `prepare` 继续作为一次性的下载与校验入口：
 
