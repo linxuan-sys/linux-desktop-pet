@@ -1,4 +1,4 @@
-name: Publish independent animation resources
+name: Release assets
 
 on:
   push:
@@ -20,11 +20,19 @@ concurrency:
 jobs:
   resources:
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
       ASSET_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      - name: Validate immutable resource tag
+        shell: bash
+        run: |
+          if [[ ! "$ASSET_TAG" =~ ^assets-v[0-9]+([.][0-9]+)*$ ]]; then
+            echo "Invalid asset tag '$ASSET_TAG'; expected assets-vN, for example assets-v2." >&2
+            exit 1
+          fi
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -37,7 +45,11 @@ jobs:
         with:
           python-version: '3.13'
       - name: Package original bytes and processing markers (no Rust build)
-        run: python3 scripts/package-assets.py all --tag "$ASSET_TAG" --output dist/assets
+        run: |
+          python3 scripts/package-assets.py all --tag "$ASSET_TAG" --output dist/assets
+          test "$(find dist/assets -maxdepth 1 -name '*-assets.tar.gz' | wc -l)" -eq 8
+          test "$(find dist/assets -maxdepth 1 -name '*.manifest.json' | wc -l)" -eq 8
+          (cd dist/assets && sha256sum -c SHA256SUMS)
       - name: Publish complete resource release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,7 +61,14 @@ jobs:
               exit 1
             }
           else
-            gh release create "$ASSET_TAG" --target "$GITHUB_SHA" --draft --title "Animation resources $ASSET_TAG" --notes 'Original WebP files and ASSETS.json markers. No Rust programs; no image re-encoding. Artwork attribution: hunmer/aboutme-pets; upstream artwork terms apply.' --latest=false
+            gh release create "$ASSET_TAG" --target "$GITHUB_SHA" --draft --title "$ASSET_TAG" --notes '八位角色的原始 WebP 文件与 ASSETS.json 处理标记。程序发行包单独发布，不重新编码图片。美术来源：hunmer/aboutme-pets，请遵守上游素材条款。' --latest=false
           fi
           gh release upload "$ASSET_TAG" --clobber dist/assets/*.tar.gz dist/assets/*.manifest.json dist/assets/SHA256SUMS
+          test "$(gh release view "$ASSET_TAG" --json assets --jq '.assets | length')" -eq 17
           gh release edit "$ASSET_TAG" --draft=false --latest=false
+          {
+            echo "### 素材 Release $ASSET_TAG 已发布"
+            echo "- 8 个原始 WebP 素材归档"
+            echo "- 8 个资源清单"
+            echo "- 1 个校验文件"
+          } >> "$GITHUB_STEP_SUMMARY"

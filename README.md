@@ -70,6 +70,15 @@ Original WebP resources come from the independent [`assets-v1`](https://github.c
 
 The compact TUI keeps a readable background on the selected pet row. Size and cache use visible `[-] value [+]` controls: `-`/`+` or left/right adjust, up/down selects a field, and Enter/Space toggles Alpha. `pet run <name> --foreground` is available for debugging; normal `pet run <name>` exits after download and leaves the pet running in the background.
 
+### Release channels
+
+Programs and artwork have separate, immutable release channels:
+
+- `assets-vN` is built from the original WebP files and manifests. Push an `assets-*` tag (or manually run **Release assets**) to package all eight characters, upload them to a draft release, verify their SHA-256 files, and only then publish the release.
+- `vX.Y.Z` is built by **Build program-only releases**. It checks that the asset tag in `resources/source.json` is already public, then publishes only the small `pet` programs.
+
+For new artwork, first commit the files and publish the new `assets-vN` release. Then update `resources/source.json`, bump the program version, and publish `vX.Y.Z`. Old asset releases should not be replaced.
+
 ### Why Rust, why Linux, why Wayland
 
 **Rust, because a desktop pet should be invisible in the process list.** Every pet uses Rust 2024 and compiles to a single executable of roughly 2.6 MB with `strip`, LTO, and `opt-level = "s"`. There is no garbage collector, no JavaScript runtime, and no bundled browser. The renderer blits one 640×360 RGBA frame into a shared-memory buffer; the sensors run on ordinary threads.
@@ -533,6 +542,15 @@ pet tui
 原始 WebP 从独立的 [`assets-v1`](https://github.com/tingfeng347/linux-desktop-pet/releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `<素材根目录>/<角色>/assets/assets-v1/`，之后可离线复用。默认根目录是 `$XDG_DATA_HOME`（通常是 `~/.local/share`）；可用 `pet assets-dir 目录`，或在 TUI 中选择 **素材目录** 后按 Enter 修改。输入 `default` 可恢复默认。原有文件不会自动搬走，运行中的桌宠重启后使用新目录。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
 
 紧凑 TUI 的选中角色行有清晰背景高亮。大小和缓存显示为可操作的 `[-] 数值 [+]`：用 `-`/`+` 或左右键调整，用上下键选择项目，Enter/空格切换 Alpha。排查时可运行 `pet run <角色> --foreground`；普通 `pet run <角色>` 会在下载完成后退出终端阻塞，让桌宠留在后台。
+
+### 发布通道
+
+程序和素材使用两条分开的、不可变的 Release 通道：
+
+- `assets-vN` 保存原始 WebP 和清单。推送 `assets-*` 标签（或手动运行 **Release assets**）会把八只角色分别打包，上传到草稿 Release，校验 SHA-256，全部成功后才公开。
+- `vX.Y.Z` 由 **Build program-only releases** 构建。它会先确认 `resources/source.json` 引用的素材版本已经公开，然后只发布很小的 `pet` 程序包。
+
+素材更新时，先提交文件并发布新的 `assets-vN`；随后更新 `resources/source.json`、提升程序版本，再发布 `vX.Y.Z`。已经公开的旧素材 Release 不应覆盖。
 
 ### 为什么是 Rust，为什么是 Linux，为什么是 Wayland
 
