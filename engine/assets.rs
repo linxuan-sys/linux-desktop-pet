@@ -13,6 +13,7 @@ pub enum Progress {
     Manifest,
     Download { received: u64, total: u64 },
     Verify,
+    Frames { done: usize, total: usize },
 }
 pub type ProgressSender = Sender<Progress>;
 
@@ -148,8 +149,8 @@ impl Manifest {
     }
 }
 
-pub fn pet_data(pet: &str) -> Result<PathBuf, String> {
-    Ok(crate::settings::configured_assets_root()?.join(pet))
+pub fn managed_directory_in(root: &Path, pet: &str) -> PathBuf {
+    root.join("pet/assets").join(pet)
 }
 
 fn has_webp(directory: &Path) -> bool {
@@ -206,7 +207,7 @@ fn repository_candidates(pet: &str) -> Result<Vec<PathBuf>, String> {
 fn managed_media_for(pet: &str) -> Option<MediaLocation> {
     let source = Source::default();
     source.validate().ok()?;
-    let path = pet_data(pet).ok()?.join("assets").join(&source.tag);
+    let path = managed_directory_in(&crate::settings::configured_assets_root().ok()?, pet);
     let manifest = std::fs::read(path.join(".ready.json"))
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Manifest>(&bytes).ok())?;
@@ -274,13 +275,23 @@ pub fn resolve_media_for(
 /// Prefer explicit and repository media, then reuse the verified managed cache,
 /// and download exactly once when no local copy exists.
 pub fn prepare_media_for(pet: &str, explicit: Option<&Path>) -> Result<MediaLocation, String> {
+    prepare_media_with_progress_for(pet, explicit, None)
+}
+pub fn prepare_media_with_progress_for(
+    pet: &str,
+    explicit: Option<&Path>,
+    progress: Option<&ProgressSender>,
+) -> Result<MediaLocation, String> {
     if let Some(media) = resolve_media_for(pet, explicit)? {
         if media.source == MediaSource::Repository {
             crate::settings::remember_repository_media(pet, &media.path)?;
         }
         return Ok(media);
     }
-    let path = download_for(pet)?;
+    let path = match progress {
+        Some(sender) => download_managed(pet, Some(sender), false)?,
+        None => download_for(pet)?,
+    };
     Ok(MediaLocation {
         path,
         source: MediaSource::Managed,
@@ -297,6 +308,9 @@ fn render_cli_progress(progress: Receiver<Progress>) {
 
     for update in progress {
         match update {
+            Progress::Frames { done, total } => {
+                eprintln!("生成磁盘缓存 {done}/{total}");
+            }
             Progress::Manifest => {
                 eprint!("\r\x1b[2K  正在获取动画资源清单…");
                 flush_stderr();
@@ -394,7 +408,7 @@ fn download_managed(
     if !(base.starts_with("https://") || base.starts_with("http://")) {
         return Err("resource URL must use HTTP(S)".into());
     }
-    let store = pet_data(pet)?.join("assets").join(&source.tag);
+    let store = managed_directory_in(&crate::settings::configured_assets_root()?, pet);
     download(&source, &base, &store, pet, progress, check_updates)
 }
 

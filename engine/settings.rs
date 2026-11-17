@@ -3,6 +3,40 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(usize)]
+pub enum DiskCacheMode {
+    #[default]
+    None,
+    Common,
+    All,
+}
+impl DiskCacheMode {
+    pub const VALUES: [Self; 3] = [Self::None, Self::Common, Self::All];
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "none" => Ok(Self::None),
+            "common" => Ok(Self::Common),
+            "all" => Ok(Self::All),
+            _ => Err("disk_cache must be none, common or all".into()),
+        }
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Common => "common",
+            Self::All => "all",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "不缓存",
+            Self::Common => "常用动作",
+            Self::All => "全量缓存",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// Root containing one data directory per character. Keeping this global
@@ -13,6 +47,7 @@ pub struct Settings {
     pub media_dir: Option<PathBuf>,
     pub scale: f64,
     pub cache_mib: usize,
+    pub disk_cache: DiskCacheMode,
     pub output: Option<String>,
     pub click: [String; 3],
     /// Premultiply alpha before writing to the shared buffer. Wayland's
@@ -50,6 +85,11 @@ impl Settings {
                 .ok_or("cache_mib must be an integer between 16 and 512")?
                 as usize,
         };
+        let disk_cache = match section.get("disk_cache") {
+            None => DiskCacheMode::None,
+            Some(Value::String(value)) => DiskCacheMode::parse(value)?,
+            _ => return Err("disk_cache must be none, common or all".into()),
+        };
         let output = match section.get("output") {
             None | Some(Value::Null) => None,
             Some(Value::String(v)) if !v.is_empty() => Some(v.clone()),
@@ -74,6 +114,7 @@ impl Settings {
             media_dir,
             scale,
             cache_mib,
+            disk_cache,
             output,
             premultiply,
             click: crate::sensors::proc::Config::parse(raw, pet).click,
@@ -263,6 +304,26 @@ pub fn set_media_dir(pet: &str, value: &str, reset: bool) -> Result<Option<PathB
 
 pub fn config_path() -> PathBuf {
     xdg("XDG_CONFIG_HOME", ".config").join("pet/pet.json")
+}
+pub fn frame_cache_dir_for(pet: &str) -> PathBuf {
+    xdg("XDG_CACHE_HOME", ".cache").join("pet/frames").join(pet)
+}
+pub fn disk_cache_for(pet: &str) -> Result<DiskCacheMode, String> {
+    let raw = read_config()?;
+    Settings::parse_for(
+        &if raw.is_null() {
+            serde_json::json!({})
+        } else {
+            raw
+        },
+        pet,
+    )
+    .map(|settings| settings.disk_cache)
+}
+pub fn set_disk_cache_for(pet: &str, mode: DiskCacheMode) -> Result<(), String> {
+    update_for(pet, |raw| {
+        raw["pets"][pet]["disk_cache"] = serde_json::json!(mode.as_str())
+    })
 }
 pub fn state_path() -> PathBuf {
     xdg("XDG_STATE_HOME", ".local/state")

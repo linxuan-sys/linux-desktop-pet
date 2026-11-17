@@ -11,6 +11,8 @@ use std::sync::{
 };
 use std::time::Instant;
 
+#[path = "frame_cache.rs"]
+pub mod frame_cache;
 #[path = "raw.rs"]
 mod raw;
 
@@ -136,19 +138,26 @@ pub struct Sheet {
     last: Option<(String, u32, bool, i32)>,
     published_bytes: Arc<AtomicUsize>,
     budget: Arc<AtomicUsize>,
+    disk_mode: Arc<AtomicUsize>,
 }
 
 impl Sheet {
-    pub fn load(media: &Path, budget_mib: usize) -> Result<Self, String> {
+    pub fn load(
+        media: &Path,
+        budget_mib: usize,
+        mode: crate::settings::DiskCacheMode,
+    ) -> Result<Self, String> {
         let names = names(media)?.into_iter().collect();
         let media = media.to_path_buf();
         let budget = Arc::new(AtomicUsize::new(budget_mib * 1048576));
         let published_bytes = Arc::new(AtomicUsize::new(0));
         let (tx, requests) = mpsc::sync_channel::<(String, u32)>(1);
         let (results, rx) = mpsc::sync_channel(1);
+        let disk_mode = Arc::new(AtomicUsize::new(mode as usize));
+        let worker_mode = disk_mode.clone();
         let worker_budget = budget.clone();
         let worker_bytes = published_bytes.clone();
-        let mut cache = raw::ClipCache::new(media, worker_budget, worker_bytes)?;
+        let mut cache = raw::ClipCache::new(media, worker_budget, worker_bytes, worker_mode)?;
         std::thread::Builder::new()
             .name("pet-frame-decode".into())
             .spawn(move || {
@@ -171,6 +180,7 @@ impl Sheet {
             last: None,
             published_bytes,
             budget,
+            disk_mode,
         })
     }
 
@@ -216,6 +226,12 @@ impl Sheet {
         }
     }
 
+    pub fn set_disk_mode(&mut self, mode: crate::settings::DiskCacheMode) {
+        if self.disk_mode.swap(mode as usize, Ordering::Relaxed) != mode as usize {
+            self.failed.clear();
+            self.invalidate();
+        }
+    }
     pub fn set_budget(&mut self, mib: usize) {
         self.budget.store(mib * 1048576, Ordering::Relaxed);
     }
@@ -291,7 +307,11 @@ pub fn benchmark_playback(media: &Path, seconds: u64) -> Result<(), String> {
     if !(1..=300).contains(&seconds) {
         return Err("benchmark duration must be 1..300 seconds".into());
     }
-    let mut sheet = Sheet::load(media, 32)?;
+    let mut sheet = Sheet::load(
+        media,
+        32,
+        crate::settings::disk_cache_for(crate::character::selected())?,
+    )?;
     let mut canvas = Canvas::new(WINDOW_W, WINDOW_H);
     let wait = Instant::now();
     while !sheet.ready("idle") {
@@ -400,7 +420,11 @@ fn source_anim(media: &Path, name: &str) -> Result<Anim, String> {
     process_source(media, read_image(&path)?)
 }
 
-fn native_source_anim(media: &Path, name: &str) -> Result<Anim<NativePixels>, String> {
+fn native_source_anim_for(
+    media: &Path,
+    name: &str,
+    pet: &str,
+) -> Result<Anim<NativePixels>, String> {
     let path = media.join("anim").join(format!("{name}.webp"));
     let bytes = std::fs::read(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let info = webp::BitstreamFeatures::new(&bytes).ok_or("invalid source WebP")?;
@@ -425,12 +449,20 @@ fn native_source_anim(media: &Path, name: &str) -> Result<Anim<NativePixels>, St
     };
     let image = image::ImageBuffer::from_raw(info.width(), info.height(), pixels)
         .ok_or("invalid source RGBA length")?;
-    process_source(media, image)
+    process_source_for(media, image, pet)
 }
 
+#[cfg(test)]
 fn process_source<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
     media: &Path,
+    image: image::ImageBuffer<image::Rgba<u8>, C>,
+) -> Result<Anim<C>, String> {
+    process_source_for(media, image, crate::character::selected())
+}
+fn process_source_for<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
+    media: &Path,
     mut image: image::ImageBuffer<image::Rgba<u8>, C>,
+    pet: &str,
 ) -> Result<Anim<C>, String> {
     if image.dimensions() != (FRAME_W * COLS, FRAME_H * ROWS) {
         return Err("expected 5120x5400 source sheet".into());
@@ -466,16 +498,25 @@ fn process_source<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
         atlas_height: image.height(),
         frames,
     };
-    apply_source_repairs(media, &mut image, &meta)?;
+    apply_source_repairs_for(media, &mut image, &meta, pet)?;
     Ok(Anim { image, meta })
 }
 
+#[cfg(test)]
 fn apply_source_repairs<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
     media: &Path,
     image: &mut image::ImageBuffer<image::Rgba<u8>, C>,
     meta: &Metadata,
 ) -> Result<(), String> {
-    if crate::character::selected() == "codex-girl" && !cleaned_assets(media)? {
+    apply_source_repairs_for(media, image, meta, crate::character::selected())
+}
+fn apply_source_repairs_for<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
+    media: &Path,
+    image: &mut image::ImageBuffer<image::Rgba<u8>, C>,
+    meta: &Metadata,
+    pet: &str,
+) -> Result<(), String> {
+    if pet == "codex-girl" && !cleaned_assets(media)? {
         for frame in &meta.frames {
             repair_body_matte(image, frame);
         }

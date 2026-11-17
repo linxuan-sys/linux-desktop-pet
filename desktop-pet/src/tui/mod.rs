@@ -1,7 +1,7 @@
 mod theme;
 mod usage;
 
-use crate::{assets, character, control, settings};
+use crate::{assets, character, control, gfx, settings};
 use crossterm::{
     cursor::{Hide, Show},
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -46,12 +46,14 @@ enum Page {
     Settings,
     Advanced,
     Library,
+    DiskCache,
 }
 #[derive(Clone, Copy, Debug)]
 enum Action {
     Start,
     Stop,
     Update,
+    Cache(settings::DiskCacheMode),
 }
 #[derive(Clone, Copy, PartialEq)]
 enum Field {
@@ -198,6 +200,18 @@ impl App {
             texts.first().cloned().unwrap_or_default()
         }
     }
+    fn disk_cache_value(&self) -> String {
+        let values: Result<Vec<_>, _> = self
+            .targets
+            .iter()
+            .map(|index| self.values(*index).map(|s| s.disk_cache))
+            .collect();
+        match values {
+            Ok(values) if values.windows(2).any(|pair| pair[0] != pair[1]) => "多个值".into(),
+            Ok(values) => values.first().map_or("不缓存", |mode| mode.label()).into(),
+            Err(_) => "配置错误".into(),
+        }
+    }
     fn save_value(&mut self, field: Field, value: f64) -> Result<(), String> {
         for index in &self.targets {
             self.values(*index)?;
@@ -299,6 +313,9 @@ impl App {
             while let Ok(progress) = job.progress.try_recv() {
                 redraw = true;
                 job.detail = match progress {
+                    assets::Progress::Frames { done, total } => {
+                        format!("生成磁盘缓存 {done}/{total} 个动作…")
+                    }
                     assets::Progress::Manifest => "检查远端清单…".into(),
                     assets::Progress::Verify => "下载完成，校验文件…".into(),
                     assets::Progress::Download { received, total } => {
@@ -466,7 +483,7 @@ impl App {
                     };
                     self.refresh_media();
                     self.page = Page::Settings;
-                    self.menu = 3;
+                    self.menu = 4;
                 } else {
                     self.editor = Some(Editor::ConfirmPath {
                         path,
@@ -538,18 +555,20 @@ impl App {
         } else {
             let count = match self.page {
                 Page::Actions => 5,
-                Page::Settings => 6,
+                Page::Settings => 7,
                 Page::Advanced => 2,
                 Page::Library => 3,
+                Page::DiskCache => 4,
                 Page::Home => 0,
             };
             match key.code {
                 KeyCode::Esc | KeyCode::Char('q') => {
-                    self.page = if matches!(self.page, Page::Library | Page::Advanced) {
-                        Page::Settings
-                    } else {
-                        Page::Home
-                    };
+                    self.page =
+                        if matches!(self.page, Page::Library | Page::Advanced | Page::DiskCache) {
+                            Page::Settings
+                        } else {
+                            Page::Home
+                        };
                     self.menu = 0;
                 }
                 KeyCode::Up | KeyCode::Char('k') => self.menu = self.menu.saturating_sub(1),
@@ -595,7 +614,7 @@ impl App {
                 self.page = Page::Settings;
                 self.menu = 0;
             }
-            (Page::Actions, 3) | (Page::Settings, 4) => self.launch_job(Action::Update),
+            (Page::Actions, 3) | (Page::Settings, 5) => self.launch_job(Action::Update),
             (Page::Settings, 0..=1) => {
                 let field = if self.menu == 0 {
                     Field::Scale
@@ -624,10 +643,21 @@ impl App {
                 );
             }
             (Page::Settings, 2) => {
+                self.page = Page::DiskCache;
+                self.menu = self
+                    .targets
+                    .first()
+                    .and_then(|index| self.values(*index).ok())
+                    .map_or(0, |s| s.disk_cache as usize);
+            }
+            (Page::DiskCache, 0..=2) => {
+                self.launch_job(Action::Cache(settings::DiskCacheMode::VALUES[self.menu]))
+            }
+            (Page::Settings, 3) => {
                 self.page = Page::Advanced;
                 self.menu = 0;
             }
-            (Page::Settings, 3) => {
+            (Page::Settings, 4) => {
                 if self.job.is_some() {
                     self.notice = "请等待当前任务完成后修改素材目录。".into();
                     return;
@@ -648,7 +678,7 @@ impl App {
                 };
                 self.refresh_media();
                 self.page = Page::Settings;
-                self.menu = 3;
+                self.menu = 4;
             }
             (Page::Library, 1) => {
                 self.editor = Some(Editor::Path(String::new()));
@@ -656,7 +686,8 @@ impl App {
                     "输入素材库、仓库根目录、单角色 media 或空目录；Enter 预览，Esc 取消。".into();
             }
             _ => {
-                self.page = if matches!(self.page, Page::Library | Page::Advanced) {
+                self.page = if matches!(self.page, Page::Library | Page::Advanced | Page::DiskCache)
+                {
                     Page::Settings
                 } else {
                     Page::Home
@@ -668,11 +699,9 @@ impl App {
 }
 
 fn managed_in(root: &Path, pet: &str) -> bool {
-    std::fs::read_dir(root.join(pet).join("assets")).is_ok_and(|entries| {
-        entries
-            .flatten()
-            .any(|entry| entry.path().join(".ready.json").is_file())
-    })
+    assets::managed_directory_in(root, pet)
+        .join(".ready.json")
+        .is_file()
 }
 fn perform(
     action: Action,
@@ -680,6 +709,15 @@ fn perform(
     progress: assets::ProgressSender,
 ) -> Result<String, String> {
     match action {
+        Action::Cache(mode) => {
+            let status = gfx::frame_cache::configure(pet, mode, None, Some(&progress))?;
+            Ok(format!(
+                "磁盘缓存已设为{}，{} 个动作，{:.1} MiB。",
+                mode.label(),
+                status.clips,
+                status.bytes as f64 / 1048576.0
+            ))
+        }
         Action::Stop => {
             if !control::pet_running(pet) {
                 return Ok("已停止，跳过。".into());
@@ -801,6 +839,7 @@ fn draw(frame: &mut ratatui::Frame, app: &App) {
         Page::Settings => "PET / 设置",
         Page::Advanced => "PET / 高级设置",
         Page::Library => "PET / 素材目录",
+        Page::DiskCache => "PET / 磁盘缓存",
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -938,7 +977,14 @@ fn draw_home(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     if let Some(index) = app.current() {
         let value = app
             .values(index)
-            .map(|s| format!("大小 {:.0}% · 缓存 {} MiB", s.scale * 100.0, s.cache_mib))
+            .map(|s| {
+                format!(
+                    "大小 {:.0}% · 内存缓存 {} MiB · 磁盘 {}",
+                    s.scale * 100.0,
+                    s.cache_mib,
+                    s.disk_cache.label()
+                )
+            })
             .unwrap_or_else(|error| error);
         detail.push(Line::from(format!("{} · {value}", NAMES[index])));
         let actual = control::running_media(character::PETS[index]).or_else(|| {
@@ -1029,7 +1075,8 @@ fn draw_menu(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         ],
         Page::Settings => vec![
             ("大小".into(), app.setting_value(Field::Scale)),
-            ("动作缓存".into(), app.setting_value(Field::Cache)),
+            ("内存缓存".into(), app.setting_value(Field::Cache)),
+            ("磁盘缓存".into(), app.disk_cache_value()),
             ("高级设置".into(), "›".into()),
             ("素材目录".into(), root),
             ("检查素材更新".into(), "›".into()),
@@ -1042,6 +1089,15 @@ fn draw_menu(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         Page::Library => vec![
             ("自动管理".into(), "本地素材优先，缺失时下载".into()),
             ("选择目录…".into(), "素材库 / 仓库 / media / 空目录".into()),
+            ("返回".into(), String::new()),
+        ],
+        Page::DiskCache => vec![
+            ("不缓存".into(), "关闭并清理生成的磁盘缓存".into()),
+            (
+                "常用动作".into(),
+                "8 个常用动作；其他动作仍需整图解码".into(),
+            ),
+            ("全量缓存".into(), "预生成全部动作，占用较多磁盘".into()),
             ("返回".into(), String::new()),
         ],
         Page::Home => Vec::new(),
@@ -1087,7 +1143,31 @@ fn draw_menu(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         regions[1],
         &mut ListState::default().with_selected(Some(app.menu)),
     );
-    frame.render_widget(Paragraph::new(if app.page==Page::Library {"素材库目录是全局设置；单角色 media 只关联所选伙伴。\n已有文件不复制、不删除；选择目录后先预览，再确认。"}else{"选择项目并按 Enter 修改；设置会应用到所选伙伴。"}).style(app.theme.dim(DIM)).wrap(Wrap{trim:true}),regions[2]);
+    let detail = if app.page == Page::Library {
+        "素材库目录是全局设置；单角色 media 只关联所选伙伴。\n已有文件不复制、不删除；选择目录后先预览，再确认。".into()
+    } else if app.page == Page::DiskCache {
+        let first = app
+            .targets
+            .first()
+            .map(|index| character::PETS[*index])
+            .unwrap_or(character::PETS[0]);
+        let directory = settings::frame_cache_dir_for(first);
+        let usage = gfx::frame_cache::status(first)
+            .map(|s| format!("{:.1} MiB", s.bytes as f64 / 1048576.0))
+            .unwrap_or_else(|e| e);
+        format!(
+            "目录：{} · 已占用 {usage}\n生成时会暂时使用较多内存；运行中的伙伴会自动应用。",
+            short_path(&directory, area.width.saturating_sub(26) as usize)
+        )
+    } else {
+        "选择项目并按 Enter 修改；设置会应用到所选伙伴。".into()
+    };
+    frame.render_widget(
+        Paragraph::new(detail)
+            .style(app.theme.dim(DIM))
+            .wrap(Wrap { trim: true }),
+        regions[2],
+    );
 }
 fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &App) {
     let Some(editor) = &app.editor else {
@@ -1100,7 +1180,7 @@ fn draw_editor(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 if *field == Field::Scale {
                     "大小"
                 } else {
-                    "动作缓存"
+                    "内存缓存"
                 },
                 app.targets.len()
             ),

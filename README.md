@@ -73,7 +73,7 @@ cd pet-0.1.0-x86_64
 pet tui
 ```
 
-Original WebP resources come from the independent [`assets-v1`](../../releases/tag/assets-v1) release. The downloader verifies the manifest, archive and every file with SHA-256, then stores the result under `<assets_root>/<pet>/assets/assets-v1/` for offline reuse. The default root is `$XDG_DATA_HOME` (usually `~/.local/share`); set another root with `pet assets-dir PATH`, or select **素材目录** in the TUI and press Enter. Use `pet assets-dir default` or choose automatic management in the TUI to reset. Existing files stay in the old root, and running pets use the new root after restart. A requested clip is decoded on a background thread, cropped losslessly in memory, and kept in a bounded 32 MiB hot cache by default. The green-screen cleanup markers and original WebP bytes are preserved.
+Original WebP resources come from the independent [`assets-v1`](../../releases/tag/assets-v1) release. The downloader verifies the manifest, archive and every file with SHA-256, then stores the result under `<assets_root>/pet/assets/<pet>/` for offline reuse. The default root is `$XDG_DATA_HOME` (usually `~/.local/share`); set another root with `pet assets-dir PATH`, or select **素材目录** in the TUI and press Enter. Use `pet assets-dir default` or choose automatic management in the TUI to reset. Existing files stay in the old root, and running pets use the new root after restart. A requested clip is decoded on a background thread, cropped losslessly in memory, and kept in a bounded 32 MiB hot cache by default. The green-screen cleanup markers and original WebP bytes are preserved.
 
 When running from a source checkout, the CLI and TUI use the tracked `<repository>/<pet>/media` directory first, so those original WebP files are neither copied nor downloaded again. A valid `--media-dir` has the highest priority, an existing verified managed cache comes next, and only an installed `pet` with no local copy downloads the requested character. `pet download <pet>` remains the explicit refresh/download command.
 
@@ -82,6 +82,23 @@ The transparent, single-list TUI shows each character's running state, CPU and R
 Each running character also exposes a distinct Linux process name such as
 `pet-claude`, `pet-dsh` or `pet-codex`, while the installed executable remains
 `pet`.
+
+### Optional per-pet disk frame cache
+
+```bash
+pet cache dsh              # show mode, directory and size
+pet cache dsh common       # prepare the 8 frequent actions
+pet cache dsh all          # prepare every action
+pet cache dsh none         # disable and remove generated frame files
+```
+
+In the TUI, select characters, open **设置 → 磁盘缓存**, then choose **不缓存 / 常用动作 / 全量缓存**. Preparation runs in the background with progress; the saved mode is hot-applied after it succeeds. **内存缓存** remains a separate setting. Standalone binaries accept `--disk-cache none|common|all`.
+
+Frames live under `$XDG_CACHE_HOME/pet/frames/<pet>/` (default `~/.cache/pet/frames/<pet>/`). The player reads one lossless compressed frame at a time. `common` covers idle, typing, music, dance, walk, drag, happy and copy; other actions use the RAM cache. Switching to `common` removes other generated frames; `none` clears generated frame files. Sources remain unchanged. Source changes invalidate derived files, and corrupt frames are rebuilt. Cache I/O failures are reported and that action uses the RAM path until the mode is changed or the program restarts.
+
+DSH's 8 frequent actions need about 101 MiB; all 101 need about 1.29 GiB. All eight characters together need about 12.72 GiB for this format. Generation still decodes whole sheets once and may take tens of seconds with a higher temporary RAM peak; the lower playback peak applies after generation. `none` is the default.
+
+Downloaded originals are stored at `<assets_root>/pet/assets/<pet>/`, defaulting to `~/.local/share/pet/assets/<pet>/`. Both storage paths have stable names with no version suffix. Version and source identity are metadata inside the files. Old version-named directories are not read, migrated, reused or deleted.
 
 ### Release channels
 
@@ -174,7 +191,7 @@ target/release/kimi-girl
 
 ### Prepare the animation assets (optional)
 
-All renderers use `<pet>/media/anim/*.webp` directly. Clone and source runs use
+Original artwork remains in `<pet>/media/anim/*.webp`; the optional disk frame cache is generated separately. Clone and source runs use
 the existing files without copying or generating a multi-gigabyte atlas.
 
 `prepare` remains available as the one-time download and validation entry:
@@ -262,8 +279,8 @@ Launcher reference:
 ```text
 pet build                       编译全部桌宠
 pet <名字> build                只编译该桌宠
-pet prepare                     为全部桌宠生成素材缓存
-pet <名字> prepare              只生成该桌宠的素材缓存
+pet prepare                     下载并校验全部桌宠素材
+pet <名字> prepare              下载并校验该桌宠素材
 pet {claude|dsh|codex|grok|qwen|gemini|glm|kimi}   启停该桌宠
 pet <名字> size 50..150         设置大小百分比，运行中生效
 ```
@@ -343,6 +360,7 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
     "claude-girl": {
       "scale": 1.0,
       "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
@@ -350,6 +368,7 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
     "kimi-girl": {
       "scale": 1.0,
       "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty kimi" }
@@ -362,7 +381,8 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 | --- | --- | --- |
 | `assets_root` | `null` | Global root for downloaded character data. `null` uses `$XDG_DATA_HOME`; a string must be an absolute path or start with `~/`. |
 | `scale` | `1.0` | Size multiplier, `0.5`–`1.5`. `1.0` draws one buffer pixel per canvas pixel, i.e. no resampling. |
-| `cache_mib` | `32` | Lossless decoded-clip cache target in MiB, `16`–`512`. One active clip may exceed the target temporarily. |
+| `cache_mib` | `32` | RAM clip-cache target in MiB, `16`–`512`, for actions without disk caching. One active clip may exceed it. |
+| `disk_cache` | `"none"` | Per-pet frame cache: `none`, `common` (8 frequent actions), or `all`. |
 | `output` | `null` | Connector name to pin the pet to, e.g. `"DP-1"`. `null` follows the compositor. |
 | `premultiply` | `true` | Premultiply alpha before writing to the shared buffer. Wayland's `Argb8888` is a premultiplied format, so `true` is correct. Set `false` only for artwork whose antialiased edges carry green-screen residue that shows up as dark speckle once premultiplied. |
 | `click.left` | `""` | Left-click command. Empty means no command; the click still plays the happy reaction. |
@@ -551,7 +571,7 @@ cd pet-0.1.0-x86_64
 pet tui
 ```
 
-原始 WebP 从独立的 [`assets-v1`](../../releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `<素材根目录>/<角色>/assets/assets-v1/`，之后可离线复用。默认根目录是 `$XDG_DATA_HOME`（通常是 `~/.local/share`）；可用 `pet assets-dir 目录`，或在 TUI 中选择 **素材目录** 后按 Enter 修改。用 `pet assets-dir default` 或在 TUI 选择“自动管理”恢复默认。原有文件不会自动搬走，运行中的桌宠重启后使用新目录。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
+原始 WebP 从独立的 [`assets-v1`](../../releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `<素材根目录>/pet/assets/<角色>/`，之后可离线复用。默认根目录是 `$XDG_DATA_HOME`（通常是 `~/.local/share`）；可用 `pet assets-dir 目录`，或在 TUI 中选择 **素材目录** 后按 Enter 修改。用 `pet assets-dir default` 或在 TUI 选择“自动管理”恢复默认。原有文件不会自动搬走，运行中的桌宠重启后使用新目录。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
 
 从源码仓库运行时，CLI 和 TUI 会优先直接使用仓库中已有的 `<仓库>/<角色>/media`，不会复制或重复下载这些原始 WebP。有效的 `--media-dir` 优先级最高，其次是仓库素材和已校验的受管缓存；只有没有本地素材的安装版 `pet` 才会按需下载。`pet download <角色>` 仍可显式下载或刷新素材。
 
@@ -559,6 +579,23 @@ pet tui
 
 运行中的角色会使用独立的 Linux 进程名，例如 `pet-claude`、`pet-dsh`、
 `pet-codex`；安装的可执行文件本身仍然叫 `pet`。
+
+### 每角色可选的磁盘分帧缓存
+
+```bash
+pet cache dsh              # 查看档位、目录与占用
+pet cache dsh common       # 生成常用 8 动作
+pet cache dsh all          # 生成全部动作
+pet cache dsh none         # 关闭并清理生成的分帧缓存
+```
+
+TUI 中选中伙伴后，进入 **设置 → 磁盘缓存**，选择 **不缓存 / 常用动作 / 全量缓存**。支持为每只角色分别设置，也支持批量选中；后台生成时显示进度，成功后保存并热应用。原来的 MiB 预算改称 **内存缓存**，两者独立。独立角色二进制可使用 `--disk-cache none|common|all`。
+
+分帧缓存放在 `$XDG_CACHE_HOME/pet/frames/<角色>/`，默认 `~/.cache/pet/frames/<角色>/`。播放时只读取并无损解压所需帧。常用动作包含待机、打字、听音乐、跳舞、走路、拖拽、开心、复制；其他动作仍走内存缓存。切回“常用动作”会清理其他生成帧，选择“不缓存”会清理生成文件，原始 WebP 不变。源素材变化后缓存失效，损坏帧自动重建；缓存读写失败会提示原因，该动作暂时走内存路径，改换档位或重启后可重新尝试。
+
+以当前素材计，DSH 常用 8 动作约 101 MiB，全量 101 动作约 1.29 GiB；八角色全量缓存约 12.72 GiB。首次生成仍需解码整张图，可能耗时几十秒并暂时占用较多内存；生成完成后播放才获得较低峰值。默认不启用磁盘缓存。
+
+下载的原始素材直接放在 `<素材根目录>/pet/assets/<角色>/`，默认 `~/.local/share/pet/assets/<角色>/`。素材和缓存目录均不带版本标签，版本及来源指纹只存在文件内部。旧的带版本号目录不读取、不兼容、不迁移、不复用，也不会删除。
 
 ### 发布通道
 
@@ -737,8 +774,8 @@ mkdir -p ~/.local/opt ~/.local/bin \
 ```text
 pet build                       编译全部桌宠
 pet <名字> build                只编译该桌宠
-pet prepare                     为全部桌宠生成素材缓存
-pet <名字> prepare              只生成该桌宠的素材缓存
+pet prepare                     下载并校验全部桌宠素材
+pet <名字> prepare              下载并校验该桌宠素材
 pet {claude|dsh|codex|grok|qwen|gemini|glm|kimi}   启停该桌宠
 pet <名字> size 50..150         设置大小百分比，运行中生效
 ```
@@ -818,6 +855,7 @@ cp pet.example.json ~/.config/pet/pet.json
     "claude-girl": {
       "scale": 1.0,
       "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
@@ -825,6 +863,7 @@ cp pet.example.json ~/.config/pet/pet.json
     "kimi-girl": {
       "scale": 1.0,
       "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty kimi" }
@@ -837,7 +876,8 @@ cp pet.example.json ~/.config/pet/pet.json
 | --- | --- | --- |
 | `assets_root` | `null` | 全局素材数据根目录。`null` 使用 `$XDG_DATA_HOME`；字符串必须是绝对路径或以 `~/` 开头。 |
 | `scale` | `1.0` | 大小倍数，`0.5`–`1.5`。`1.0` 表示一个缓冲区像素对应一个画布像素，即不重采样。 |
-| `cache_mib` | `32` | 无损解码片段的目标内存预算（MiB），`16`–`512`。单个正在使用的动作可能暂时超出目标值。 |
+| `cache_mib` | `32` | 未使用磁盘缓存的动作所用的内存预算（MiB），`16`–`512`；单个动作可能暂时超出目标值。 |
+| `disk_cache` | `"none"` | 每角色独立的磁盘缓存：`none` 不缓存、`common` 常用 8 动作、`all` 全量。 |
 | `output` | `null` | 固定到某个输出，例如 `"DP-1"`。`null` 跟随合成器。 |
 | `premultiply` | `true` | 写入共享缓冲区前是否预乘 alpha。Wayland 的 `Argb8888` 本身就是预乘格式，所以 `true` 才是正确的。只有当素材抗锯齿边缘带有绿幕残留（预乘后会变成暗色雪花）时才设为 `false`。 |
 | `click.left` | `""` | 左键命令。留空表示不执行命令，但仍然会播开心反应。 |

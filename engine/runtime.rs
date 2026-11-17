@@ -34,6 +34,7 @@ pub fn entry(arguments: &[String]) -> Result<(), String> {
     let mut check = false;
     let mut benchmark = None;
     let mut download_only = false;
+    let mut disk_cache = None;
     let mut args = arguments.iter().cloned();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -53,6 +54,13 @@ pub fn entry(arguments: &[String]) -> Result<(), String> {
                         .map_err(|_| "invalid benchmark duration")?,
                 )
             }
+            "--disk-cache" => {
+                disk_cache = Some(settings::DiskCacheMode::parse(
+                    &args
+                        .next()
+                        .ok_or("--disk-cache needs none, common or all")?,
+                )?);
+            }
             "--scale" => {
                 scale = Some(
                     args.next()
@@ -64,7 +72,8 @@ pub fn entry(arguments: &[String]) -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "{} [--media-dir DIR] [--download-assets | --prepare-assets | --check-assets | --benchmark-playback SECONDS]\n{} --scale 50..150 (save and apply to a running pet)",
+                    "{} [--media-dir DIR] [--download-assets | --prepare-assets | --check-assets | --benchmark-playback SECONDS]\n{} --scale 50..150 (save and apply to a running pet)\n{} --disk-cache none|common|all (save and prepare disk cache)",
+                    crate::character::selected(),
                     crate::character::selected(),
                     crate::character::selected()
                 );
@@ -72,6 +81,30 @@ pub fn entry(arguments: &[String]) -> Result<(), String> {
             }
             _ => return Err(format!("unknown argument: {arg}; see --help")),
         }
+    }
+    if disk_cache.is_some()
+        && (scale.is_some() || prepare || check || benchmark.is_some() || download_only)
+    {
+        return Err(
+            "--disk-cache cannot be combined with scale, prepare, check, benchmark or download"
+                .into(),
+        );
+    }
+    if let Some(mode) = disk_cache {
+        let status = gfx::frame_cache::configure(
+            crate::character::selected(),
+            mode,
+            media_override.as_deref(),
+            None,
+        )?;
+        println!(
+            "磁盘缓存：{}，{} 个动作，{:.1} MiB\n{}",
+            status.mode.label(),
+            status.clips,
+            status.bytes as f64 / 1048576.0,
+            status.directory.display()
+        );
+        return Ok(());
     }
     if let Some(scale) = scale {
         settings::set_scale(scale)?;
@@ -98,7 +131,11 @@ pub fn entry(arguments: &[String]) -> Result<(), String> {
     #[cfg(feature = "unified")]
     let _instance = crate::control::InstanceGuard::acquire()?;
     let watcher = settings::Watcher::new()?;
-    let mut sheet = Sheet::load(&media, watcher.current.cache_mib)?;
+    let mut sheet = Sheet::load(
+        &media,
+        watcher.current.cache_mib,
+        watcher.current.disk_cache,
+    )?;
     sheet.set_premultiply(watcher.current.premultiply);
     let (tx, rx) = channel();
     spawn_sensor_threads(&tx);
@@ -216,6 +253,7 @@ fn run(
                     }
                 }
                 sheet.set_budget(config.current.cache_mib);
+                sheet.set_disk_mode(config.current.disk_cache);
                 sheet.set_premultiply(config.current.premultiply);
                 sheet.invalidate();
                 dirty = true;

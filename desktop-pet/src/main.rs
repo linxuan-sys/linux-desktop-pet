@@ -77,6 +77,7 @@ fn dispatch(args: &[String]) -> Result<(), String> {
                 })
         }
         Some("assets-dir") => assets_dir(&args[1..]),
+        Some("cache") => disk_cache(&args[1..]),
         Some("stop") => args.get(1).map_or_else(
             || Err("usage: pet stop <角色>".into()),
             |name| character::select(name).and_then(|_| control::stop()),
@@ -136,6 +137,28 @@ fn set_size(pet: &str, percent: &str) -> Result<(), String> {
         raw["pets"][pet]["scale"] = serde_json::json!(value / 100.0)
     })?;
     println!("{pet} 大小已保存为 {value:.0}%");
+    Ok(())
+}
+
+fn disk_cache(args: &[String]) -> Result<(), String> {
+    if !(1..=2).contains(&args.len()) {
+        return Err("usage: pet cache <角色> [none|common|all]".into());
+    }
+    let pet = character::select(&args[0])?;
+    let status = if let Some(value) = args.get(1) {
+        let mode = settings::DiskCacheMode::parse(value)?;
+        gfx::frame_cache::configure(pet, mode, None, None)?
+    } else {
+        gfx::frame_cache::status(pet)?
+    };
+    println!(
+        "{pet}：磁盘缓存 {} ({})\n目录：{}\n已生成：{} 个动作，{:.2} MiB",
+        status.mode.label(),
+        status.mode.as_str(),
+        status.directory.display(),
+        status.clips,
+        status.bytes as f64 / 1048576.0
+    );
     Ok(())
 }
 
@@ -232,6 +255,7 @@ fn usage() {
          pet run <角色> --foreground      留在当前终端前台运行（调试用）\n\
          pet run <角色> [参数]           高级运行参数在前台执行\n\
          pet download <角色>|all         下载并校验原始 WebP 资源\n\
+         pet cache <角色> [none|common|all]  查看 / 设置磁盘缓存\n\
          pet assets-dir [目录|default]   查看或设置素材存储根目录\n\
          pet assets-dir <角色> <目录>   直接使用该角色的本地 media 目录\n\
          pet stop <角色>                 停止指定角色\n\

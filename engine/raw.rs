@@ -2,7 +2,7 @@
 use super::*;
 use std::path::PathBuf;
 
-fn release_unused_decode_memory() {
+pub(super) fn release_unused_decode_memory() {
     // glibc's worker-thread arena retains source-decoder scratch after free.
     // Return unused pages after cache changes, never on each displayed frame.
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -15,16 +15,19 @@ fn release_unused_decode_memory() {
     }
 }
 
-struct Clip {
-    entries: Vec<Entry>,
-    frames: Vec<Vec<u8>>,
+pub(super) struct Clip {
+    pub(super) entries: Vec<Entry>,
+    pub(super) frames: Vec<Vec<u8>>,
     bytes: usize,
 }
 impl Clip {
     fn load(media: &Path, name: &str) -> Result<Self, String> {
         // Preserve existing alpha, skip cleaned assets, and repair legacy Codex
         // source sheets once while they are cropped into the in-memory cache.
-        Self::from_anim(native_source_anim(media, name)?)
+        Self::load_for(media, name, crate::character::selected())
+    }
+    pub(super) fn load_for(media: &Path, name: &str, pet: &str) -> Result<Self, String> {
+        Self::from_anim(native_source_anim_for(media, name, pet)?)
     }
     fn from_anim<C: std::ops::Deref<Target = [u8]> + 'static>(
         anim: Anim<C>,
@@ -111,13 +114,19 @@ pub(super) struct ClipCache {
     published_bytes: Arc<AtomicUsize>,
     decoder: zstd::bulk::Decompressor<'static>,
     pub(super) loads: usize,
+    disk_mode: Arc<AtomicUsize>,
+    disk: super::frame_cache::Store,
 }
 impl ClipCache {
     pub(super) fn new(
         media: PathBuf,
         budget: Arc<AtomicUsize>,
         published_bytes: Arc<AtomicUsize>,
+        disk_mode: Arc<AtomicUsize>,
     ) -> Result<Self, String> {
+        let mode = crate::settings::DiskCacheMode::VALUES[disk_mode.load(Ordering::Relaxed)];
+        let disk =
+            super::frame_cache::Store::new(media.clone(), crate::character::selected(), mode);
         Ok(Self {
             media,
             clips: HashMap::new(),
@@ -127,6 +136,8 @@ impl ClipCache {
             published_bytes,
             decoder: zstd::bulk::Decompressor::new().map_err(|e| e.to_string())?,
             loads: 0,
+            disk_mode,
+            disk,
         })
     }
     fn evict(&mut self, protected: Option<&str>) -> bool {
@@ -147,6 +158,30 @@ impl ClipCache {
     pub(super) fn frame(&mut self, name: &str, index: u32) -> Result<Frame, String> {
         if index >= COUNT as u32 {
             return Err("frame index out of range".into());
+        }
+        let mode = crate::settings::DiskCacheMode::VALUES[self.disk_mode.load(Ordering::Relaxed)];
+        if self.disk.set_mode(mode) {
+            self.clips.clear();
+            self.order.clear();
+            self.bytes = 0;
+            release_unused_decode_memory();
+        }
+        match self.disk.frame(name, index, &mut self.decoder) {
+            Ok(Some(frame)) => {
+                if !self.clips.is_empty() {
+                    self.clips.clear();
+                    self.order.clear();
+                    self.bytes = 0;
+                    release_unused_decode_memory();
+                }
+                self.published_bytes
+                    .store(self.disk.bytes(), Ordering::Relaxed);
+                return Ok(frame);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("animation {name}: 磁盘缓存不可用：{error}；此动作临时使用内存缓存")
+            }
         }
         let budget = self.budget.load(Ordering::Relaxed);
         let changed = if !self.clips.contains_key(name) {
@@ -181,7 +216,12 @@ pub(super) fn check_assets(media: &Path) -> Result<(), String> {
     let all = names(media)?;
     let budget = Arc::new(AtomicUsize::new(32 * 1048576));
     let published = Arc::new(AtomicUsize::new(0));
-    let mut cache = ClipCache::new(media.to_path_buf(), budget, published)?;
+    let mut cache = ClipCache::new(
+        media.to_path_buf(),
+        budget,
+        published,
+        Arc::new(AtomicUsize::new(0)),
+    )?;
     let mut canvas = Canvas::new(WINDOW_W, WINDOW_H);
     let start = Instant::now();
     let mut max_cached = 0;
@@ -376,8 +416,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let budget = Arc::new(AtomicUsize::new(usize::MAX));
         let published = Arc::new(AtomicUsize::new(0));
-        let mut cache =
-            ClipCache::new(dir.path().to_path_buf(), budget.clone(), published.clone()).unwrap();
+        let mut cache = ClipCache::new(
+            dir.path().to_path_buf(),
+            budget.clone(),
+            published.clone(),
+            Arc::new(AtomicUsize::new(0)),
+        )
+        .unwrap();
         for name in ["old", "active"] {
             let clip = Clip::from_anim(animation()).unwrap();
             cache.bytes += clip.bytes;
@@ -400,7 +445,7 @@ mod tests {
     #[ignore = "requires repository DSH assets; run alone to measure process RSS"]
     fn real_clip_switches_keep_resident_memory_bounded() {
         let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dsh-girl/media");
-        let mut sheet = Sheet::load(&media, 16).unwrap();
+        let mut sheet = Sheet::load(&media, 16, crate::settings::DiskCacheMode::None).unwrap();
         fn rss() -> usize {
             std::fs::read_to_string("/proc/self/smaps_rollup")
                 .unwrap()
@@ -449,8 +494,13 @@ mod tests {
     fn real_raw_clips_match_existing_processed_renderer_and_never_write_sources() {
         let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("media");
         let budget = Arc::new(AtomicUsize::new(32 * 1048576));
-        let mut cache =
-            ClipCache::new(media.clone(), budget, Arc::new(AtomicUsize::new(0))).unwrap();
+        let mut cache = ClipCache::new(
+            media.clone(),
+            budget,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicUsize::new(0)),
+        )
+        .unwrap();
         let mut expected = Canvas::new(WINDOW_W, WINDOW_H);
         let mut actual = Canvas::new(WINDOW_W, WINDOW_H);
         for pose in ["idle", "happy", "walk-left"] {
