@@ -1,6 +1,6 @@
 [package]
 name = "desktop-pet"
-version = "3.1.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "One native Wayland desktop pet, eight downloadable characters, and a Rust TUI"
