@@ -113,7 +113,8 @@ impl App {
             media: Vec::new(),
             monitor: usage::Monitor::new(),
             job: None,
-            notice: "Tab 勾选多位伙伴；Enter 选择操作。CPU 100% 表示占满一个核心。".into(),
+            notice: "Tab 勾选多位伙伴；Enter 选择操作。CPU 按整机总算力计算，100% 表示整机满载。"
+                .into(),
             theme: Theme::detect(),
         };
         app.refresh_media();
@@ -521,7 +522,7 @@ impl App {
                 KeyCode::Esc if !self.selected.is_empty() => self.selected.clear(),
                 KeyCode::Esc => return false,
                 KeyCode::Char('/') => self.searching = true,
-                KeyCode::Char('?') => self.notice = "Tab/Shift+Tab 勾选并移动；Ctrl+A 全选筛选结果，Ctrl+D 清空；Enter 操作，, 设置，/ 搜索，Esc 返回。".into(),
+                KeyCode::Char('?') => self.notice = "Tab/Shift+Tab 勾选并移动；Ctrl+A 全选筛选结果，Ctrl+D 清空；CPU 以整机总算力为 100%；Enter 操作，, 设置，/ 搜索，Esc 返回。".into(),
                 KeyCode::Char(',') => self.open(Page::Settings),
                 KeyCode::Enter => self.open(Page::Actions),
                 KeyCode::Char('s') | KeyCode::Char('d') => {
@@ -863,7 +864,7 @@ fn draw_home(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                 app.query,
                 if app.searching { "▏" } else { "" }
             )),
-            Line::from("      名称        状态    素材          CPU        内存"),
+            Line::from("      名称        状态    素材      CPU（整机）    内存"),
         ])
         .style(app.theme.dim(DIM)),
         regions[0],
@@ -883,7 +884,7 @@ fn draw_home(frame: &mut ratatui::Frame, area: Rect, app: &App) {
                     .unwrap_or_default();
                 let cpu = usage
                     .cpu
-                    .map(|value| format!("{value:.1}%"))
+                    .map(|value| format!("{value:.2}%"))
                     .unwrap_or_else(|| "—".into());
                 let rss = usage
                     .rss
@@ -972,7 +973,7 @@ fn draw_home(frame: &mut ratatui::Frame, area: Rect, app: &App) {
         .filter(|v| v.pid.is_some())
         .count();
     detail.push(Line::from(format!(
-        "总计 {running} 位运行 · CPU {cpu:.1}% · 内存 {:.1} MiB · 每秒刷新",
+        "总计 {running} 位运行 · CPU（整机） {cpu:.2}% · 内存 {:.1} MiB · 每秒刷新",
         memory as f64 / 1048576.0
     )));
     frame.render_widget(Paragraph::new(detail).style(app.theme.dim(DIM)), regions[2]);
@@ -1274,7 +1275,7 @@ mod tests {
         for expected in [
             "Claude",
             "Kimi",
-            "12.5%",
+            "12.50%",
             "64.0 MiB",
             "每秒刷新",
             "CPU",

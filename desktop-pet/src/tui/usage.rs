@@ -1,7 +1,6 @@
-//! One /proc snapshot per second; CPU is the sum of all process threads.
+//! CPU is all process threads as a fraction of the entire machine's CPU time.
 use crate::control;
 use std::collections::BTreeMap;
-use std::time::Instant;
 
 #[derive(Clone, Copy, Debug)]
 struct Snapshot {
@@ -37,8 +36,7 @@ pub struct Usage {
 }
 
 pub struct Monitor {
-    previous: BTreeMap<&'static str, (Snapshot, Instant)>,
-    hz: f64,
+    previous: BTreeMap<&'static str, (Snapshot, u64)>,
     page_size: u64,
     pub current: BTreeMap<&'static str, Usage>,
 }
@@ -47,11 +45,13 @@ impl Monitor {
         Self {
             previous: BTreeMap::new(),
             current: BTreeMap::new(),
-            hz: unsafe { libc::sysconf(libc::_SC_CLK_TCK) }.max(1) as f64,
             page_size: unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as u64,
         }
     }
     pub fn sample(&mut self) {
+        let total = std::fs::read_to_string("/proc/stat")
+            .ok()
+            .and_then(|text| machine_ticks(&text));
         for pet in crate::character::PETS {
             let pid = control::read_pid_for(pet);
             let snapshot = pid.and_then(|pid| {
@@ -59,17 +59,17 @@ impl Monitor {
                     .ok()
                     .and_then(|text| parse_stat(pid, &text))
             });
-            let now = Instant::now();
             let usage = if let Some(snapshot) = snapshot {
-                let cpu = self.previous.get(pet).and_then(|(old, time)| {
-                    cpu_percent(
-                        *old,
-                        snapshot,
-                        now.duration_since(*time).as_secs_f64(),
-                        self.hz,
-                    )
+                let cpu = total.and_then(|total| {
+                    self.previous
+                        .get(pet)
+                        .and_then(|(old, old_total)| cpu_percent(*old, snapshot, *old_total, total))
                 });
-                self.previous.insert(pet, (snapshot, now));
+                if let Some(total) = total {
+                    self.previous.insert(pet, (snapshot, total));
+                } else {
+                    self.previous.remove(pet);
+                }
                 Usage {
                     pid,
                     cpu,
@@ -86,11 +86,32 @@ impl Monitor {
         }
     }
 }
-fn cpu_percent(old: Snapshot, new: Snapshot, seconds: f64, hz: f64) -> Option<f64> {
-    if old.pid != new.pid || old.started != new.started || seconds <= 0.0 {
+fn machine_ticks(text: &str) -> Option<u64> {
+    let mut fields = text.lines().next()?.split_whitespace();
+    if fields.next()? != "cpu" {
         return None;
     }
-    Some(new.ticks.checked_sub(old.ticks)? as f64 / hz / seconds * 100.0)
+    // guest and guest_nice are already included in user and nice, respectively.
+    let values: Vec<_> = fields
+        .take(8)
+        .map(str::parse::<u64>)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    if values.len() < 4 {
+        return None;
+    }
+    values.into_iter().try_fold(0u64, u64::checked_add)
+}
+
+fn cpu_percent(old: Snapshot, new: Snapshot, old_total: u64, total: u64) -> Option<f64> {
+    if old.pid != new.pid || old.started != new.started {
+        return None;
+    }
+    let elapsed = total.checked_sub(old_total)?;
+    if elapsed == 0 {
+        return None;
+    }
+    Some(new.ticks.checked_sub(old.ticks)? as f64 / elapsed as f64 * 100.0)
 }
 
 #[cfg(test)]
@@ -110,9 +131,14 @@ mod tests {
         assert_eq!(a.rss_pages, 512);
         let mut b = a;
         b.ticks += 150;
-        assert_eq!(cpu_percent(a, b, 1.0, 100.0), Some(150.0));
+        assert_eq!(cpu_percent(a, b, 1000, 2600), Some(9.375));
+        b.ticks = a.ticks + 100;
+        assert_eq!(cpu_percent(a, b, 1000, 2600), Some(6.25));
+        assert_eq!(cpu_percent(a, b, 1000, 1100), Some(100.0));
+        assert_eq!(cpu_percent(a, b, 1000, 1000), None);
+        assert_eq!(cpu_percent(a, b, 1000, 900), None);
         b.started += 1;
-        assert_eq!(cpu_percent(a, b, 1.0, 100.0), None);
+        assert_eq!(cpu_percent(a, b, 1000, 2600), None);
         fields[0] = "Z";
         assert!(parse_stat(42, &format!("42 (pet) {}", fields.join(" "))).is_none());
     }
@@ -121,5 +147,16 @@ mod tests {
         let pid = std::process::id();
         let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
         assert!(parse_stat(pid, &stat).unwrap().rss_pages > 0);
+        assert!(machine_ticks(&std::fs::read_to_string("/proc/stat").unwrap()).unwrap() > 0);
+    }
+    #[test]
+    fn machine_clock_includes_idle_and_counts_guest_time_once() {
+        assert_eq!(
+            machine_ticks("cpu 100 20 30 400 5 6 7 8 50 10\ncpu0 1 2 3 4"),
+            Some(576)
+        );
+        assert_eq!(machine_ticks("cpu 1 2 3 4"), Some(10));
+        assert_eq!(machine_ticks("cpu0 1 2 3 4"), None);
+        assert_eq!(machine_ticks("cpu 1 invalid 3 4"), None);
     }
 }
