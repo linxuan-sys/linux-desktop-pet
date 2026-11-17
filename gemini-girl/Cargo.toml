@@ -4,6 +4,8 @@ version = "3.0.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Gemini Girl — a desktop pet that walks on your Linux desktop"
+[features]
+unified = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -17,3 +19,11 @@ tempfile = "3.27.0"
 zbus = "5"
 wl-clipboard-rs = "0.9"
 webp.workspace = true
+
+zstd.workspace = true
+
+ureq.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+tar.workspace = true
+fs2.workspace = true

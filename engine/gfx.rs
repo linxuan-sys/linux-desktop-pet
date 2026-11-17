@@ -6,6 +6,10 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 
+#[path = "packed.rs"]
+mod packed;
+pub use packed::pack_assets;
+
 pub const FRAME_W: u32 = 640;
 pub const FRAME_H: u32 = 360;
 pub const PAD: u32 = 6;
@@ -322,7 +326,10 @@ fn cleaned_assets(dir: &Path) -> Result<bool, String> {
 
 /// Restore only the largest visible body's interior. Keep the exterior AA
 /// band, real transparent holes, detached effects and all original RGB.
-fn repair_body_matte(image: &mut RgbaImage, frame: &FrameMeta) {
+fn repair_body_matte<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
+    image: &mut image::ImageBuffer<image::Rgba<u8>, C>,
+    frame: &FrameMeta,
+) {
     let (w, h) = (frame.width as usize, frame.height as usize);
     if w < 5 || h < 5 {
         return;
@@ -389,7 +396,10 @@ fn repair_body_matte(image: &mut RgbaImage, frame: &FrameMeta) {
 /// legacy source sheets drift darker over each 10-second loop, so restarting at
 /// frame zero made the whole character flash brighter. Only RGB changes;
 /// pose, silhouette, alpha and the original asset files stay untouched.
-fn blend_loop_seam(image: &mut RgbaImage, meta: &Metadata) {
+fn blend_loop_seam<C: std::ops::Deref<Target = [u8]> + std::ops::DerefMut>(
+    image: &mut image::ImageBuffer<image::Rgba<u8>, C>,
+    meta: &Metadata,
+) {
     const TAIL: usize = 12;
     if meta.frames.len() <= TAIL {
         return;
@@ -455,8 +465,8 @@ fn blend_loop_seam(image: &mut RgbaImage, meta: &Metadata) {
         }
     }
 }
-struct Anim {
-    image: RgbaImage,
+struct Anim<C: std::ops::Deref<Target = [u8]> = Vec<u8>> {
+    image: image::ImageBuffer<image::Rgba<u8>, C>,
     meta: Metadata,
 }
 impl Anim {
@@ -470,7 +480,8 @@ impl Anim {
             ));
         }
         let mut image = read_image(&path)?;
-        let needs_codex_repairs = env!("CARGO_PKG_NAME") == "codex-girl" && !cleaned_assets(dir)?;
+        let needs_codex_repairs =
+            crate::character::selected() == "codex-girl" && !cleaned_assets(dir)?;
         if needs_codex_repairs {
             for frame in &meta.frames {
                 repair_body_matte(&mut image, frame);
@@ -479,6 +490,8 @@ impl Anim {
         }
         Ok(Self { image, meta })
     }
+}
+impl<C: std::ops::Deref<Target = [u8]>> Anim<C> {
     fn draw(&self, index: u32, mirror: bool, shift: i32, do_premul: bool, canvas: &mut Canvas) {
         canvas.buf.fill(0);
         let frame = &self.meta.frames[index as usize];
@@ -548,7 +561,7 @@ impl Canvas {
 }
 type DecodeResult = (String, Result<Anim, String>);
 /// One in-flight request, no hidden queue; all cached pixels share one budget.
-pub struct Sheet {
+pub struct AtlasSheet {
     metadata: HashMap<String, Metadata>,
     anims: HashMap<String, Anim>,
     order: VecDeque<String>,
@@ -562,7 +575,7 @@ pub struct Sheet {
     /// Whether pixels are premultiplied on the way into the buffer.
     premultiply: bool,
 }
-impl Sheet {
+impl AtlasSheet {
     pub fn load(media: &Path, budget_mib: usize) -> Result<Self, String> {
         let mut metadata = HashMap::new();
         for name in names(media)? {
@@ -712,6 +725,156 @@ impl Sheet {
         self.last = Some(key);
         true
     }
+}
+
+/// Development atlases remain supported; release media uses bounded frame decoding.
+pub enum Sheet {
+    Atlas(AtlasSheet),
+    Packed(packed::PackedSheet),
+}
+impl Sheet {
+    pub fn load(media: &Path, budget_mib: usize) -> Result<Self, String> {
+        if media.join("anim").is_dir() {
+            packed::PackedSheet::load_with_budget(media, budget_mib).map(Self::Packed)
+        } else if media.join("packed/library.json").is_file() {
+            packed::PackedSheet::load(media).map(Self::Packed)
+        } else {
+            AtlasSheet::load(media, budget_mib).map(Self::Atlas)
+        }
+    }
+    pub fn invalidate(&mut self) {
+        match self {
+            Self::Atlas(s) => s.invalidate(),
+            Self::Packed(s) => s.invalidate(),
+        }
+    }
+    pub fn set_premultiply(&mut self, on: bool) {
+        match self {
+            Self::Atlas(s) => s.set_premultiply(on),
+            Self::Packed(s) => s.set_premultiply(on),
+        }
+    }
+    pub fn set_budget(&mut self, mib: usize) {
+        match self {
+            Self::Atlas(s) => s.set_budget(mib),
+            Self::Packed(s) => s.set_budget(mib),
+        }
+    }
+    pub fn ready(&mut self, pose: &str) -> bool {
+        match self {
+            Self::Atlas(s) => s.ready(pose),
+            Self::Packed(s) => s.ready(pose),
+        }
+    }
+    pub fn bytes(&self) -> usize {
+        match self {
+            Self::Atlas(s) => s.bytes(),
+            Self::Packed(s) => s.bytes(),
+        }
+    }
+    pub fn draw(
+        &mut self,
+        pose: &str,
+        elapsed: u64,
+        mirror: bool,
+        shift: i32,
+        canvas: &mut Canvas,
+    ) -> bool {
+        match self {
+            Self::Atlas(s) => s.draw(pose, elapsed, mirror, shift, canvas),
+            Self::Packed(s) => s.draw(pose, elapsed, mirror, shift, canvas),
+        }
+    }
+}
+
+pub fn check_assets(media: &Path) -> Result<(), String> {
+    if media.join("anim").is_dir() {
+        return packed::check_original_assets(media);
+    }
+    if media.join("packed/library.json").is_file() {
+        return packed::check_assets(media);
+    }
+    let mut sheet = Sheet::load(media, 128)?;
+    let mut canvas = Canvas::new(WINDOW_W, WINDOW_H);
+    let all = names(media)?;
+    let start = std::time::Instant::now();
+    for name in &all {
+        let wait = std::time::Instant::now();
+        while !sheet.ready(name) {
+            if wait.elapsed().as_secs() > 30 {
+                return Err(format!("{name}: decode timeout"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        if matches!(&sheet, Sheet::Atlas(s) if s.failed.contains(name)) {
+            return Err(format!("{name}: failed to decode"));
+        }
+        for i in 0..COLS * ROWS {
+            sheet.draw(
+                name,
+                (i as u64 * 1000).div_ceil(FPS),
+                i % 2 == 1,
+                0,
+                &mut canvas,
+            );
+        }
+    }
+    println!(
+        "{}: {} atlas clips, {} frames OK; {:.2} MiB cached at end; {:.2}s total",
+        crate::character::selected(),
+        all.len(),
+        all.len() * (COLS * ROWS) as usize,
+        sheet.bytes() as f64 / 1048576.0,
+        start.elapsed().as_secs_f64()
+    );
+    Ok(())
+}
+
+/// Real-time frame pipeline benchmark without creating a Wayland window.
+pub fn benchmark_playback(media: &Path, seconds: u64, legacy_atlas: bool) -> Result<(), String> {
+    if !(1..=300).contains(&seconds) {
+        return Err("benchmark duration must be 1..300 seconds".into());
+    }
+    let mut sheet = if legacy_atlas {
+        Sheet::Atlas(AtlasSheet::load(media, 128)?)
+    } else {
+        Sheet::load(media, 32)?
+    };
+    let mut canvas = Canvas::new(WINDOW_W, WINDOW_H);
+    let wait = std::time::Instant::now();
+    while !sheet.ready("idle") {
+        if wait.elapsed().as_secs() > 30 {
+            return Err("idle decode timeout".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let start = std::time::Instant::now();
+    let mut drawn = 0u64;
+    while start.elapsed().as_secs() < seconds {
+        sheet.ready("idle");
+        if sheet.draw(
+            "idle",
+            start.elapsed().as_millis() as u64,
+            false,
+            0,
+            &mut canvas,
+        ) {
+            drawn += 1;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(16));
+    }
+    if drawn < seconds * FPS * 9 / 10 {
+        return Err(format!(
+            "playback too slow: {drawn} frame updates in {seconds}s"
+        ));
+    }
+    println!(
+        "{}: {drawn} frame updates in {:.2}s; {:.3} MiB retained frame data; full-resolution lossless playback, no Wayland window",
+        crate::character::selected(),
+        start.elapsed().as_secs_f64(),
+        sheet.bytes() as f64 / 1048576.0
+    );
+    Ok(())
 }
 #[cfg(test)]
 mod tests {
@@ -919,7 +1082,7 @@ mod tests {
 
     #[test]
     fn codex_raw_matte_repairs_interiors_but_preserves_edges() {
-        if env!("CARGO_PKG_NAME") != "codex-girl" {
+        if crate::character::selected() != "codex-girl" {
             return;
         }
         let (dir, meta, _) = matte_fixture();
@@ -942,13 +1105,16 @@ mod tests {
         let (dir, meta, _) = matte_fixture();
         std::fs::write(dir.path().join("ASSETS.json"), "{broken").unwrap();
         let result = Anim::decode(&dir.path().join("optimized"), "a", meta);
-        assert_eq!(result.is_err(), env!("CARGO_PKG_NAME") == "codex-girl");
+        assert_eq!(
+            result.is_err(),
+            crate::character::selected() == "codex-girl"
+        );
     }
 
     #[test]
     #[ignore = "requires repository Codex assets"]
     fn codex_running_hair_does_not_show_the_desktop_through_matte_patches() {
-        if env!("CARGO_PKG_NAME") != "codex-girl" {
+        if crate::character::selected() != "codex-girl" {
             return;
         }
         let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("media");
@@ -978,7 +1144,7 @@ mod tests {
 
     #[test]
     fn codex_raw_loop_blends_tail_without_touching_cleaned_assets() {
-        if env!("CARGO_PKG_NAME") != "codex-girl" {
+        if crate::character::selected() != "codex-girl" {
             return;
         }
         let dir = library();
@@ -1018,7 +1184,7 @@ mod tests {
         assert_eq!(cleaned.image, image);
     }
 
-    fn await_clip(sheet: &mut Sheet, name: &str) {
+    fn await_clip(sheet: &mut AtlasSheet, name: &str) {
         let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while !sheet.ready(name) {
             assert!(std::time::Instant::now() < end, "decoder did not finish");
@@ -1028,7 +1194,7 @@ mod tests {
     #[test]
     fn cache_evicts_before_decode_and_never_exceeds_reserved_budget() {
         let dir = library();
-        let mut sheet = Sheet::load(dir.path(), 128).unwrap();
+        let mut sheet = AtlasSheet::load(dir.path(), 128).unwrap();
         sheet.budget = 960; // exactly two tiny clips
         await_clip(&mut sheet, "a");
         await_clip(&mut sheet, "b");
@@ -1044,7 +1210,7 @@ mod tests {
     #[test]
     fn superseded_decode_does_not_replace_the_requested_clip() {
         let dir = library();
-        let mut sheet = Sheet::load(dir.path(), 128).unwrap();
+        let mut sheet = AtlasSheet::load(dir.path(), 128).unwrap();
         sheet.ready("a");
         await_clip(&mut sheet, "c");
         assert_eq!(sheet.bytes(), 480);
@@ -1056,7 +1222,7 @@ mod tests {
     #[test]
     fn edge_alignment_preserves_visible_pixels_in_both_directions() {
         let dir = library();
-        let mut sheet = Sheet::load(dir.path(), 128).unwrap();
+        let mut sheet = AtlasSheet::load(dir.path(), 128).unwrap();
         await_clip(&mut sheet, "a"); // visible pixel starts at original x=0
         let mut c = Canvas::new(WINDOW_W, WINDOW_H);
         assert!(sheet.draw("a", 0, false, -ART_SHIFT, &mut c));
@@ -1131,7 +1297,7 @@ mod tests {
     #[test]
     fn broken_clip_does_not_freeze_clock_or_overwrite_previous_pixels() {
         let dir = library();
-        let mut sheet = Sheet::load(dir.path(), 128).unwrap();
+        let mut sheet = AtlasSheet::load(dir.path(), 128).unwrap();
         await_clip(&mut sheet, "a");
         let mut c = Canvas::new(WINDOW_W, WINDOW_H);
         sheet.draw("a", 0, false, 0, &mut c);

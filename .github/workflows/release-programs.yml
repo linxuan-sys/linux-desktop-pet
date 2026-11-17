@@ -1,0 +1,147 @@
+name: Build program-only releases
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - '**/*.rs'
+      - '**/Cargo.toml'
+      - Cargo.lock
+      - scripts/**
+      - resources/**
+      - .github/workflows/release-programs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: programs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu]
+    env:
+      CARGO_BUILD_JOBS: '2'
+      PET_ASSET_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /Cargo.toml
+            /Cargo.lock
+            /LICENSE
+            /engine/
+            /desktop-pet/
+            /scripts/
+            /resources/
+            /*-girl/Cargo.toml
+            /*-girl/src/
+      - name: Confirm animations are excluded from the program build
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          assert not any(Path('.').glob('*-girl/media/anim/*.webp')), 'Animations must not enter the program build checkout'
+          tag = json.loads(Path('resources/source.json').read_text())['tag']
+          assert re.fullmatch(r'assets-[A-Za-z0-9_.-]+', tag)
+          ref = os.environ.get('GITHUB_REF', '')
+          if ref.startswith('refs/tags/v'):
+              version = ref.removeprefix('refs/tags/v')
+              for manifest in [Path('desktop-pet/Cargo.toml')]:
+                  actual = re.search(r'^version\s*=\s*"([^"]+)"', manifest.read_text(), re.M)[1]
+                  if manifest.parent.name == 'desktop-pet':
+                      assert actual == version, f'{manifest}: update package version to {version} before tagging'
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write(f'PET_ASSET_TAG={tag}\n')
+          PY
+      - name: Install Rust
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustup target add "$RUST_TARGET"
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Test the shared engine and downloader
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build compatible Linux binaries
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zig-tools"
+          "$RUNNER_TEMP/zig-tools/bin/pip" install cargo-zigbuild==0.24.1
+          PATH="$RUNNER_TEMP/zig-tools/bin:$PATH" cargo zigbuild --release -p desktop-pet --locked --target "$RUST_TARGET.2.28"
+      - name: Package programs without animation data
+        env:
+          RUST_TARGET: ${{ matrix.target }}
+        run: python3 scripts/package-release.py --no-build --target "$RUST_TARGET" --output dist/programs
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: programs-${{ matrix.target }}
+          path: |
+            dist/programs/*.tar.gz
+            dist/programs/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          pattern: programs-*
+          merge-multiple: true
+          path: dist
+      - name: Read the resource version required by these programs
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          archive = next(Path('dist').glob('*.tar.gz'))
+          import tarfile
+          with tarfile.open(archive) as tar:
+              member = next(m for m in tar.getmembers() if m.name.endswith('/resources.json'))
+              tag = json.load(tar.extractfile(member))['tag']
+          assert re.fullmatch(r'assets-[A-Za-z0-9_.-]+', tag)
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write(f'REQUIRED_ASSET_TAG={tag}\n')
+          PY
+      - name: Publish complete program release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "$(gh release view "$REQUIRED_ASSET_TAG" --json isDraft --jq .isDraft)" = false || {
+            echo 'Publish the independent resource release before publishing programs.' >&2
+            exit 1
+          }
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" = true || {
+              echo 'This version is already public. Use a new version tag.' >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --notes 'Program-only Linux packages. Character resources download separately on first use.'
+          fi
+          gh release upload "$RELEASE_TAG" --clobber dist/*.tar.gz dist/*.sha256
+          gh release edit "$RELEASE_TAG" --draft=false --latest

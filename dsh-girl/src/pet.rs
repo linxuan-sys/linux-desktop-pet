@@ -8,6 +8,10 @@ const CLIP_MS: u64 = 10_000;
 /// for 0.5s more happy time and run the remaining 6.5s to the clip's end.
 pub const HAPPY_MS: u64 = 6_500;
 pub const HAPPY_SKIP_MS: u64 = 3_500;
+#[allow(dead_code)]
+pub const fn happy_skip_ms() -> u64 {
+    HAPPY_SKIP_MS
+}
 // Three 10s work clips, then one 10s music clip. 28s puts the first music
 // on the boundary after three clips; 38s = 10s music + three more clips.
 /// Terminal-focus cycle: two idle clips, typing, idle, music (50s total).
@@ -184,9 +188,15 @@ fn roll_random() -> &'static str {
 const LAZY_START: u64 = u64::MAX;
 
 enum Reaction {
-    Happy { start: u64 },
-    Charging { start: u64 },
-    Copy { start: u64 },
+    Happy {
+        start: u64,
+    },
+    Charging {
+        start: u64,
+    },
+    Copy {
+        start: u64,
+    },
     /// Held while the pointer drags the window; cleared on release.
     Dragged,
 }
@@ -493,7 +503,11 @@ impl Pet {
         // after midnight she alternates yawning and sleeping, even while a
         // terminal is focused
         if self.hour < 6 {
-            return if self.current == Some("drowsy") { "asleep" } else { "drowsy" };
+            return if self.current == Some("drowsy") {
+                "asleep"
+            } else {
+                "drowsy"
+            };
         }
         match self.mode {
             Mode::Action => {

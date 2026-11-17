@@ -222,7 +222,7 @@ impl WlHost {
             &surface,
             chosen.as_ref().map(|(_, o)| o),
             zwlr_layer_shell_v1::Layer::Overlay,
-            env!("CARGO_PKG_NAME").into(),
+            crate::character::selected().into(),
             &qh,
             (),
         );

@@ -1,0 +1,55 @@
+name: Publish independent animation resources
+
+on:
+  push:
+    tags: ['assets-*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Immutable resource version, for example assets-v1'
+        required: true
+        default: assets-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: resource-release
+  cancel-in-progress: false
+
+jobs:
+  resources:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      ASSET_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /scripts/package-assets.py
+            /*-girl/media/anim/
+            /*-girl/media/ASSETS.json
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Package original bytes and processing markers (no Rust build)
+        run: python3 scripts/package-assets.py all --tag "$ASSET_TAG" --output dist/assets
+      - name: Publish complete resource release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$ASSET_TAG" >/dev/null 2>&1; then
+            test "$(gh release view "$ASSET_TAG" --json isDraft --jq .isDraft)" = true || {
+              echo 'This resource version is already public. Use a new assets tag.' >&2
+              exit 1
+            }
+          else
+            gh release create "$ASSET_TAG" --target "$GITHUB_SHA" --draft --title "Animation resources $ASSET_TAG" --notes 'Original WebP files and ASSETS.json markers. No Rust programs; no image re-encoding. Artwork attribution: hunmer/aboutme-pets; upstream artwork terms apply.' --latest=false
+          fi
+          gh release upload "$ASSET_TAG" --clobber dist/assets/*.tar.gz dist/assets/*.manifest.json dist/assets/SHA256SUMS
+          gh release edit "$ASSET_TAG" --draft=false --latest=false

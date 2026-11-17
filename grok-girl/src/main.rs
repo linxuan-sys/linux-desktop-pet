@@ -1,4 +1,6 @@
 // Shared engine, independent character state machine and animation vocabulary.
+#[path = "../../engine/assets.rs"]
+mod assets;
 mod character;
 #[path = "../../engine/gfx.rs"]
 mod gfx;
