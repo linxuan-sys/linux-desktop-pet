@@ -1,8 +1,9 @@
 {
+  "assets_root": null,
   "pets": {
     "claude-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -13,7 +14,7 @@
     },
     "dsh-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -24,7 +25,7 @@
     },
     "codex-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -35,7 +36,7 @@
     },
     "grok-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -46,7 +47,7 @@
     },
     "qwen-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -57,7 +58,7 @@
     },
     "gemini-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -68,7 +69,7 @@
     },
     "glm-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {
@@ -79,7 +80,7 @@
     },
     "kimi-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
       "output": null,
       "premultiply": true,
       "click": {

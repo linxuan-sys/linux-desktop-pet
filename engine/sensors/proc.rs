@@ -1,6 +1,6 @@
 // /proc-based AI CLI detection + shared config loading.
 // pet detection scans /proc/*/comm for AI CLI processes; the loader reads
-// the shared $XDG_CONFIG_HOME/desktop-pet/desktop-pet.json.
+// the shared $XDG_CONFIG_HOME/pet/pet.json.
 
 use serde_json::Value;
 

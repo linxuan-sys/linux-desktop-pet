@@ -4,6 +4,12 @@
 /// antialiased edges carry green-screen residue (that shows up as dark speckle
 /// once premultiplied). Override with `premultiply` in the config file.
 pub const DEFAULT_PREMULTIPLY: bool = true;
+pub fn selected() -> &'static str {
+    env!("CARGO_PKG_NAME")
+}
+pub fn select(_: &str) -> Result<&'static str, String> {
+    Ok(selected())
+}
 
 const IDLE_ANIM: &str = "待机呼吸休闲";
 // Qwen Girl's clip set drops the "点击回应-" prefix.

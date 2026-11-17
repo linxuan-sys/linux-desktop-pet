@@ -1,9 +1,10 @@
 //! Main loop: sensors/input remain responsive while animation time waits for assets.
+use crate::assets;
 use crate::{gfx, host, pet, sensors, settings};
 use chrono::Timelike;
 use gfx::{ART_SHIFT, Canvas, Sheet, WINDOW_H, WINDOW_W};
 use host::AppEvent;
-use pet::{HAPPY_SKIP_MS, Pet};
+use pet::{Pet, happy_skip_ms};
 use sensors::state::DerivedState;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -15,43 +16,25 @@ enum Signal {
     Clipboard,
 }
 
-fn media_candidates() -> Vec<PathBuf> {
-    let pet = env!("CARGO_PKG_NAME");
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
-        });
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let mut dirs = vec![data.join(pet).join("media")];
-    if let Some(exe) = exe {
-        dirs.extend([
-            exe.join("media"),
-            exe.join("../media"),
-            exe.join("../../media"),
-            exe.join("../..").join(pet).join("media"),
-        ]);
-    }
-    dirs.extend([
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("media"),
-        PathBuf::from("media"),
-    ]);
-    dirs
-}
 pub fn main() {
-    if let Err(e) = entry() {
-        eprintln!("{}: {e}", env!("CARGO_PKG_NAME"));
+    let result = crate::character::select(env!("CARGO_PKG_NAME"))
+        .and_then(|_| entry(&std::env::args().skip(1).collect::<Vec<_>>()));
+    if let Err(e) = result {
+        eprintln!("{}: {e}", crate::character::selected());
         std::process::exit(1);
     }
 }
-fn entry() -> Result<(), String> {
+pub fn entry(arguments: &[String]) -> Result<(), String> {
+    #[cfg(feature = "unified")]
+    set_process_name();
+
     let mut media_override = None;
     let mut prepare = false;
-    let mut force = false;
     let mut scale = None;
-    let mut args = std::env::args().skip(1);
+    let mut check = false;
+    let mut benchmark = None;
+    let mut download_only = false;
+    let mut args = arguments.iter().cloned();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--media-dir" => {
@@ -60,7 +43,16 @@ fn entry() -> Result<(), String> {
                 ))
             }
             "--prepare-assets" => prepare = true,
-            "--force" => force = true,
+            "--check-assets" => check = true,
+            "--download-assets" => download_only = true,
+            "--benchmark-playback" => {
+                benchmark = Some(
+                    args.next()
+                        .ok_or("--benchmark-playback needs seconds (1..300)")?
+                        .parse::<u64>()
+                        .map_err(|_| "invalid benchmark duration")?,
+                )
+            }
             "--scale" => {
                 scale = Some(
                     args.next()
@@ -72,9 +64,9 @@ fn entry() -> Result<(), String> {
             }
             "--help" | "-h" => {
                 println!(
-                    "{} [--media-dir DIR] [--prepare-assets [--force]]\n{} --scale 50..150 (save and apply to a running pet)",
-                    env!("CARGO_PKG_NAME"),
-                    env!("CARGO_PKG_NAME")
+                    "{} [--media-dir DIR] [--download-assets | --prepare-assets | --check-assets | --benchmark-playback SECONDS]\n{} --scale 50..150 (save and apply to a running pet)",
+                    crate::character::selected(),
+                    crate::character::selected()
                 );
                 return Ok(());
             }
@@ -86,25 +78,48 @@ fn entry() -> Result<(), String> {
         println!("size saved: {:.0}%", scale * 100.0);
         return Ok(());
     }
-    if force && !prepare {
-        return Err("--force requires --prepare-assets".into());
+    if u8::from(prepare) + u8::from(check) + u8::from(benchmark.is_some()) + u8::from(download_only)
+        > 1
+    {
+        return Err("prepare, check, benchmark and download are mutually exclusive".into());
     }
-    let media = media_override
-        .or_else(|| {
-            media_candidates()
-                .into_iter()
-                .find(|d| d.join("anim").is_dir())
-        })
-        .ok_or("no media/anim directory")?;
-    if prepare {
-        return gfx::prepare_assets(&media, force);
+    let media =
+        assets::prepare_media_for(crate::character::selected(), media_override.as_deref())?.path;
+    if download_only {
+        println!("动画资源已就绪：{}", media.display());
+        return Ok(());
     }
+    if prepare || check {
+        return gfx::check_assets(&media);
+    }
+    if let Some(seconds) = benchmark {
+        return gfx::benchmark_playback(&media, seconds);
+    }
+    #[cfg(feature = "unified")]
+    let _instance = crate::control::InstanceGuard::acquire()?;
     let watcher = settings::Watcher::new()?;
     let mut sheet = Sheet::load(&media, watcher.current.cache_mib)?;
     sheet.set_premultiply(watcher.current.premultiply);
     let (tx, rx) = channel();
     spawn_sensor_threads(&tx);
     run(watcher, sheet, rx)
+}
+
+#[cfg(feature = "unified")]
+fn process_name_for(pet: &str) -> String {
+    let short = pet.strip_suffix("-girl").unwrap_or(pet);
+    format!("pet-{short}")
+}
+
+#[cfg(feature = "unified")]
+fn set_process_name() {
+    let name = process_name_for(crate::character::selected());
+    let Ok(name) = std::ffi::CString::new(name) else {
+        return;
+    };
+    if unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr(), 0, 0, 0) } != 0 {
+        eprintln!("set process name: {}", std::io::Error::last_os_error());
+    }
 }
 
 fn spawn_sensor_threads(tx: &Sender<Signal>) {
@@ -148,7 +163,7 @@ fn run(
     let mut host = host::open(&config.current)?;
     eprintln!(
         "{}: host ready; cache budget {} MiB",
-        env!("CARGO_PKG_NAME"),
+        crate::character::selected(),
         config.current.cache_mib
     );
     let mut pet = Pet::new();
@@ -168,8 +183,7 @@ fn run(
     let mut dirty = false;
     let mut last_spawn: Option<Instant> = None;
     let mut children = Vec::<std::process::Child>::new();
-    // Start warming the click reaction without doing any decode on the UI thread.
-    sheet.ready("happy");
+    // Decode only the first requested pose; do not load unused source sheets.
     loop {
         let current = Instant::now();
         // Dragging no longer freezes the clock: the drag itself drives a
@@ -270,7 +284,7 @@ fn run(
                 } else {
                     ART_SHIFT
                 };
-                let skip = if pose == "happy" { HAPPY_SKIP_MS } else { 0 };
+                let skip = if pose == "happy" { happy_skip_ms() } else { 0 };
                 dirty |= sheet.draw(
                     pose,
                     now.saturating_sub(pet.clip_start()) + skip,
@@ -284,5 +298,17 @@ fn run(
             dirty = false;
         }
         std::thread::sleep(Duration::from_millis(TICK_MS));
+    }
+}
+
+#[cfg(all(test, feature = "unified"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_name_uses_the_short_character_name() {
+        assert_eq!(process_name_for("claude-girl"), "pet-claude");
+        assert_eq!(process_name_for("dsh-girl"), "pet-dsh");
+        assert_eq!(process_name_for("codex-girl"), "pet-codex");
     }
 }
