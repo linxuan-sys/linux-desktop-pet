@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -u
+
+root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$root/bin/pet" ]]; then
+    binary="$root/bin/pet"
+else
+    binary="$root/pet"
+fi
+
+fail() {
+    message="$1"
+    printf 'Pet: %s\n' "$message" >&2
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send 'Pet' "$message" >/dev/null 2>&1 || true
+    fi
+    exit 1
+}
+
+[[ -x "$binary" ]] || fail "找不到可执行文件：$binary"
+
+launch_kitty() {
+    exec kitty --class pet-tui --title "Pet" \
+        -o remember_window_size=no \
+        -o initial_window_width=96c \
+        -o initial_window_height=28c \
+        -o background_opacity=0.16 \
+        -o dynamic_background_opacity=yes \
+        -o background_blur=0 \
+        -e "$binary" tui
+}
+
+launch_ghostty() {
+    exec ghostty \
+        --fullscreen=false \
+        --window-width=96 \
+        --window-height=28 \
+        --background-opacity=0.16 \
+        --background-blur=false \
+        -e "$binary" tui
+}
+
+if [[ -n "${TERMINAL:-}" ]]; then
+    read -r -a terminal_command <<<"$TERMINAL"
+    if ((${#terminal_command[@]})); then
+        case "$(basename -- "${terminal_command[0]}")" in
+            kitty) launch_kitty ;;
+            foot) exec "${terminal_command[@]}" -o colors.alpha=0.16 "$binary" tui ;;
+            alacritty) exec "${terminal_command[@]}" --option window.opacity=0.16 -e "$binary" tui ;;
+            wezterm) exec "${terminal_command[@]}" --config window_background_opacity=0.16 start -- "$binary" tui ;;
+            ghostty) launch_ghostty ;;
+            konsole) exec "${terminal_command[@]}" -e "$binary" tui ;;
+            gnome-terminal) exec "${terminal_command[@]}" -- "$binary" tui ;;
+            xfce4-terminal) exec "${terminal_command[@]}" --command="$binary tui" ;;
+            *) exec "${terminal_command[@]}" -e "$binary" tui ;;
+        esac
+    fi
+fi
+
+for terminal_name in kitty ghostty foot alacritty wezterm konsole gnome-terminal; do
+    command -v "$terminal_name" >/dev/null 2>&1 || continue
+    case "$terminal_name" in
+        kitty) launch_kitty ;;
+        ghostty) launch_ghostty ;;
+        alacritty) exec alacritty --option window.opacity=0.16 -e "$binary" tui ;;
+        konsole) exec konsole -e "$binary" tui ;;
+        foot) exec foot -o colors.alpha=0.16 "$binary" tui ;;
+        wezterm) exec wezterm --config window_background_opacity=0.16 start -- "$binary" tui ;;
+        gnome-terminal) exec gnome-terminal -- "$binary" tui ;;
+    esac
+done
+
+if command -v xdg-terminal-exec >/dev/null 2>&1; then
+    if xdg-terminal-exec "$binary" tui; then
+        exit 0
+    fi
+fi
+
+if command -v x-terminal-emulator >/dev/null 2>&1; then
+    exec x-terminal-emulator -e "$binary" tui
+fi
+if command -v xfce4-terminal >/dev/null 2>&1; then
+    exec xfce4-terminal --command="$binary tui"
+fi
+if command -v xterm >/dev/null 2>&1; then
+    exec xterm -e "$binary" tui
+fi
+
+fail '没有找到可用终端；请安装 xdg-terminal-exec 或其他终端，或在终端中直接运行 pet tui。'

@@ -40,7 +40,74 @@ That is **864 ten-second animation clips** in total.
 
 Each pet is a small, transparent, always-on-top **Wayland layer-shell** window that lives at the bottom of the screen. They idle, wander, react when you click them, notice when your battery is low, dance when music is playing, and keep you company while you code.
 
-There is no Electron, no browser engine, no X11 fallback, and no background daemon. Just eight Rust binaries and a state machine that tries to feel alive.
+There is no Electron, no browser engine, no X11 fallback, and no background daemon. Just a small Rust executable and a state machine that tries to feel alive.
+
+### Precompiled `pet`, TUI and on-demand assets
+
+The release entry point is the unified **`pet`** program. It contains no character artwork, so the program archive stays small:
+
+```bash
+pet tui                    # choose, download, configure and start a pet
+pet run kimi               # download if needed, start in the background and return
+pet download kimi          # download and verify one character's original WebP files
+pet assets-dir             # print the configured asset root
+pet assets-dir /mnt/pet    # use a different asset root
+pet stop kimi              # stop that character
+pet kimi                   # toggle it
+pet kimi size 120          # save and hot-apply the scale
+```
+
+Install the latest x86_64 or aarch64 release with one command. The bootstrap script detects the CPU architecture, downloads and verifies the program archive, then performs the same per-user install without sudo:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/linxuan-sys/linux-desktop-pet/main/scripts/install.sh | bash
+pet tui
+```
+
+To verify and unpack a release manually instead, download `pet-0.1.0-x86_64.tar.gz` or `pet-0.1.0-aarch64.tar.gz` from the [program release](../../releases/latest):
+
+```bash
+tar -xzf pet-0.1.0-x86_64.tar.gz
+cd pet-0.1.0-x86_64
+./install.sh
+pet tui
+```
+
+Original WebP resources come from the independent [`assets-v1`](../../releases/tag/assets-v1) release. The downloader verifies the manifest, archive and every file with SHA-256, then stores the result under `<assets_root>/pet/assets/<pet>/` for offline reuse. The default root is `$XDG_DATA_HOME` (usually `~/.local/share`); set another root with `pet assets-dir PATH`, or select **素材目录** in the TUI and press Enter. Use `pet assets-dir default` or choose automatic management in the TUI to reset. Existing files stay in the old root, and running pets use the new root after restart. A requested clip is decoded on a background thread, cropped losslessly in memory, and kept in a bounded 32 MiB hot cache by default. The green-screen cleanup markers and original WebP bytes are preserved.
+
+When running from a source checkout, the CLI and TUI use the tracked `<repository>/<pet>/media` directory first, so those original WebP files are neither copied nor downloaded again. A valid `--media-dir` has the highest priority, an existing verified managed cache comes next, and only an installed `pet` with no local copy downloads the requested character. `pet download <pet>` remains the explicit refresh/download command.
+
+The transparent, single-list TUI shows each character's running state, CPU and RSS memory, refreshed every second, plus totals. CPU uses the whole machine as 100% (one fully occupied logical core on a 16-core machine is 6.25%); RSS totals may count shared pages more than once. Tab/Shift+Tab marks a character and moves down/up; Ctrl+A selects filtered results, Ctrl+D clears selections, and `/` searches. Enter opens explicit start/stop/update actions for marked characters, or the cursor character when none are marked. Press `,` for settings; size/cache edits are saved with Enter and cancelled with Esc. Alpha is under advanced settings. The single **素材目录** entry offers automatic discovery or a directory preview: choose a checkout/library root, one character's `media` directory, or an empty download directory. Discovered repository paths are remembered for launches from other working directories. The CLI equivalent for a single character is `pet assets-dir kimi /path/to/kimi-girl/media`; `pet assets-dir default` restores automatic discovery. Existing files are neither copied nor deleted. Local artwork is updated through its checkout/files; downloaded artwork is refreshed through the manifest. Stop a running character before refreshing its downloaded artwork. `pet run <name> --foreground` remains available for debugging.
+
+Each running character also exposes a distinct Linux process name such as
+`pet-claude`, `pet-dsh` or `pet-codex`, while the installed executable remains
+`pet`.
+
+### Optional per-pet disk frame cache
+
+```bash
+pet cache dsh              # show mode, directory and size
+pet cache dsh common       # prepare the 8 frequent actions
+pet cache dsh all          # prepare every action
+pet cache dsh none         # disable and remove generated frame files
+```
+
+In the TUI, select characters, open **设置 → 磁盘缓存**, then choose **不缓存 / 常用动作 / 全量缓存**. Preparation runs in the background with progress; the saved mode is hot-applied after it succeeds. **内存缓存** remains a separate setting. Standalone binaries accept `--disk-cache none|common|all`.
+
+Frames live under `$XDG_CACHE_HOME/pet/frames/<pet>/` (default `~/.cache/pet/frames/<pet>/`). The player reads one lossless compressed frame at a time. `common` covers idle, typing, music, dance, walk, drag, happy and copy; other actions use the RAM cache. Switching to `common` removes other generated frames; `none` clears generated frame files. Sources remain unchanged. Source changes invalidate derived files, and corrupt frames are rebuilt. Cache I/O failures are reported and that action uses the RAM path until the mode is changed or the program restarts.
+
+DSH's 8 frequent actions need about 101 MiB; all 101 need about 1.29 GiB. All eight characters together need about 12.72 GiB for this format. Generation still decodes whole sheets once and may take tens of seconds with a higher temporary RAM peak; the lower playback peak applies after generation. `none` is the default.
+
+Downloaded originals are stored at `<assets_root>/pet/assets/<pet>/`, defaulting to `~/.local/share/pet/assets/<pet>/`. Both storage paths have stable names with no version suffix. Version and source identity are metadata inside the files. Old version-named directories are not read, migrated, reused or deleted.
+
+### Release channels
+
+Programs and artwork have separate, immutable release channels:
+
+- `assets-vN` is built from the original WebP files and manifests. Push an `assets-*` tag (or manually run **Release assets**) to package all eight characters, upload them to a draft release, verify their SHA-256 files, and only then publish the release.
+- `vX.Y.Z` is built by **Build program-only releases**. It checks that the asset tag in `resources/source.json` is already public, then publishes only the small `pet` programs.
+
+For new artwork, first commit the files and publish the new `assets-vN` release. Then update `resources/source.json`, bump the program version, and publish `vX.Y.Z`. Old asset releases should not be replaced.
 
 ### Why Rust, why Linux, why Wayland
 
@@ -83,7 +150,7 @@ Walking always covers **60 px/s** during the movement window, so a longer window
 ### Requirements
 
 - Linux with a Wayland compositor that supports `zwlr_layer_shell_v1`. **niri** and **Hyprland** are the tested targets. X11 is not supported.
-- Rust 1.88 or newer, because all eight crates use edition 2024.
+- A precompiled release needs no Rust toolchain. Building from source needs Rust 1.88 or newer because the character crates use edition 2024.
 - `pkg-config`, `wayland`, and `wayland-protocols` development files.
 - Optional: a working D-Bus session bus for MPRIS music detection.
 - Optional: `wl-clipboard` support for the clipboard reaction.
@@ -122,29 +189,23 @@ target/release/glm-girl
 target/release/kimi-girl
 ```
 
-### Prepare the animation cache (required, once per asset set)
+### Prepare the animation assets (optional)
 
-The renderer reads pre-cropped atlases from `<pet>/media/optimized/`, which is generated from `<pet>/media/anim/`. That directory is **not in git**, so it must be built once after cloning:
+Original artwork remains in `<pet>/media/anim/*.webp`; source runs use it without copying.
+`prepare` validates the originals. Optional disk frame files are generated separately
+when requested with `pet cache`.
+
+`prepare` remains available as the one-time download and validation entry:
 
 ```bash
 pet prepare
-```
-
-This walks all eight pets in order. To prepare just one:
-
-```bash
 pet kimi prepare
 ```
 
-Or without the launcher:
-
-```bash
-./target/release/kimi-girl --media-dir kimi-girl/media --prepare-assets
-```
-
-Expect a few minutes per pet and roughly **10 GB of output in total**, because the atlases are encoded losslessly. The step is idempotent: sheets that are already up to date are skipped, so an interrupted run can simply be restarted.
-
-> Re-run `prepare` after pulling new assets. The cropped atlas must match the source sheet, otherwise the renderer refuses to load it and logs `crop dimensions do not match metadata`.
+The command checks the original WebP sheets and their `ASSETS.json` processing
+marker. It does not rewrite the images or create an `optimized/` directory.
+Installed releases download only the selected character on first use and reuse
+the verified local copy afterwards.
 
 ### Run
 
@@ -219,8 +280,8 @@ Launcher reference:
 ```text
 pet build                       编译全部桌宠
 pet <名字> build                只编译该桌宠
-pet prepare                     为全部桌宠生成素材缓存
-pet <名字> prepare              只生成该桌宠的素材缓存
+pet prepare                     下载并校验全部桌宠素材
+pet <名字> prepare              下载并校验该桌宠素材
 pet {claude|dsh|codex|grok|qwen|gemini|glm|kimi}   启停该桌宠
 pet <名字> size 50..150         设置大小百分比，运行中生效
 ```
@@ -278,15 +339,15 @@ systemctl --user enable --now kimi-girl.service
 All eight pets read one file:
 
 ```text
-$XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
-# usually ~/.config/desktop-pet/desktop-pet.json
+$XDG_CONFIG_HOME/pet/pet.json
+# usually ~/.config/pet/pet.json
 ```
 
 The file is **not created automatically**. Without it every pet runs on its built-in defaults. A ready-to-edit template ships in the repository root:
 
 ```bash
-mkdir -p ~/.config/desktop-pet
-cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
+mkdir -p ~/.config/pet
+cp pet.example.json ~/.config/pet/pet.json
 ```
 
 `pet <name> size <percent>` also creates the file if it is missing.
@@ -295,17 +356,20 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 
 ```json
 {
+  "assets_root": null,
   "pets": {
     "claude-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
     },
     "kimi-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty kimi" }
@@ -316,8 +380,10 @@ Each binary selects `pets.<package-name>` and falls back to built-in defaults fo
 
 | Key | Default | Meaning |
 | --- | --- | --- |
+| `assets_root` | `null` | Global root for downloaded character data. `null` uses `$XDG_DATA_HOME`; a string must be an absolute path or start with `~/`. |
 | `scale` | `1.0` | Size multiplier, `0.5`–`1.5`. `1.0` draws one buffer pixel per canvas pixel, i.e. no resampling. |
-| `cache_mib` | `128` | Decoded-atlas budget in MiB, `128`–`512`. One atlas is roughly 25–70 MiB, so 384 holds about ten clips. |
+| `cache_mib` | `32` | RAM clip-cache target in MiB, `16`–`512`, for actions without disk caching. One active clip may exceed it. |
+| `disk_cache` | `"none"` | Per-pet frame cache: `none`, `common` (8 frequent actions), or `all`. |
 | `output` | `null` | Connector name to pin the pet to, e.g. `"DP-1"`. `null` follows the compositor. |
 | `premultiply` | `true` | Premultiply alpha before writing to the shared buffer. Wayland's `Argb8888` is a premultiplied format, so `true` is correct. Set `false` only for artwork whose antialiased edges carry green-screen residue that shows up as dark speckle once premultiplied. |
 | `click.left` | `""` | Left-click command. Empty means no command; the click still plays the happy reaction. |
@@ -343,7 +409,9 @@ pointer grab ─────► drag reaction ─┘
 - **Pet engine.** Each pose is locked for a complete 10-second clip. Drag, click-happy and clipboard copy interrupt immediately; charging waits for the current clip to finish. Drag is the only reaction driven by a held state rather than a timer.
 - **Modes.** With a terminal focused the pet runs a fixed 50-second loop: idle, idle, typing, idle, music. Otherwise it follows the seven-step awake routine: idle, idle, random, idle, idle, random, walk.
 - **Walking.** The window is stationary before and after the run window, interpolates its position during the run, and clamps at the screen edges.
-- **Renderer.** `prepare_assets` crops every one of the 120 cells to its own alpha bounding box and shelf-packs the crops into one atlas, cutting a 105 MiB sheet to roughly 35 MiB. At runtime `Sheet` decodes atlases on a dedicated thread, evicts by byte budget, and writes the current frame straight into the shared-memory buffer. Frames are double-buffered and released back by `wl_buffer.release`.
+- **Renderer.** The unified program keeps the original WebP sheet unchanged, decodes one requested clip on a background thread, crops each frame to its alpha bounds, and retains a bounded lossless hot cache. The source sheet is released after cropping.
+
+Compressed frame buffers discard unused capacity, and the cache budget counts their allocated capacity. On glibc Linux, cold loads and cache evictions also return unused allocator pages to the OS; per-frame cache hits do not trigger this work. `cache_mib` limits retained frame storage, not total process RSS: the allocator may retain fragmented pages, and cold decoding still needs a temporary 105 MiB source image plus decoder workspace.
 
 ### Animation format
 
@@ -380,9 +448,11 @@ To add a random animation, put a new WebP in `media/anim/` and add its filename 
 
 ```text
 linux-desktop-pet/
-├── Cargo.toml                workspace: eight crates, one shared engine
+├── Cargo.toml                workspace: eight character crates, `desktop-pet`, one engine
+├── desktop-pet/              unified CLI and Rust TUI; executable name is `pet`
 ├── engine/                   shared by all pets
-│   ├── gfx.rs                atlas crop/pack, decode thread, byte-budget LRU, blit
+│   ├── assets.rs             versioned download, manifest and SHA-256 verification
+│   ├── gfx.rs                original WebP decoding, crop cache and blit
 │   ├── runtime.rs            main loop, config hot-reload, drag edges, signal plumbing
 │   ├── settings.rs           config parse, atomic write, placement persistence
 │   ├── host/
@@ -396,8 +466,7 @@ linux-desktop-pet/
 │   │   └── pet.rs            state machine (the only pet-specific logic)
 │   └── media/
 │       ├── anim/             source WebP sheets (in git)
-│       ├── ASSETS.json       optional marker: "cleaned" / "raw"
-│       └── optimized/        generated atlases + json (git-ignored)
+│       └── ASSETS.json       optional marker: "cleaned" / "raw"
 ├── dsh-girl/                101 animations
 ├── codex-girl/               90 animations
 ├── grok-girl/               101 animations
@@ -407,20 +476,21 @@ linux-desktop-pet/
 ├── kimi-girl/               105 animations
 ├── docs/
 │   ├── poster.png            the octet poster
-│   ├── demo.gif              demo recording
-│   └── make_poster.py        regenerates poster.png
-├── pet                       launcher: build/prepare/start/stop/size
-├── desktop-pet.example.json  config template — copy to ~/.config/desktop-pet/
+│   └── demo.gif              demo recording
+├── resources/source.json     independent resource repository and release tag
+├── scripts/                  program/resource packaging and release helpers
+├── pet                       source-tree wrapper for the unified `pet`
+├── pet.example.json          config template — copy to ~/.config/pet/pet.json
 ├── LICENSE
 └── README.md
 ```
 
-Adding a ninth character means one new crate with three files — `main.rs`, `character.rs` and `pet.rs` — plus its media directory and two lines in `pet` and `Cargo.toml`. No engine changes.
+Adding a ninth character means one new crate with three files — `main.rs`, `character.rs` and `pet.rs` — plus its media directory and registry entries in `desktop-pet` and `Cargo.toml`. No engine changes.
 
 ### Troubleshooting
 
-- **`No such file or directory ... media/optimized/xxx.json`** — the cropped atlas cache is missing. Run `pet <name> prepare`.
-- **`crop dimensions do not match metadata`** — the atlas was built from different source sheets. Re-run `pet <name> prepare`.
+- **`expected 5120x5400 source sheet`** — the selected file is not a
+  complete original animation sheet. Restore it with `pet <name> prepare`.
 - **`animation <name>: missing from library`** — a name in `EASTER_ACTIONS` has no matching WebP. Remove it from the pool or add the asset.
 - **`no media/anim directory`** — pass `--media-dir <pet>/media`, or install `media/` into `~/.local/share/<pet>/media`.
 - **The pet is invisible or the layer never appears** — check that you are on Wayland and that your compositor supports `zwlr_layer_shell_v1`.
@@ -469,7 +539,73 @@ The source code in this repository is released under the **MIT License** — see
 
 每只桌宠都是一个透明、置顶的 **Wayland layer-shell** 窗口，常驻在屏幕底部。她们会发呆、会散步、被点击时会开心跳一下、电量低时会提醒你、有音乐时会跳舞，也会在你写代码时安静陪着你。
 
-没有 Electron，没有浏览器内核，没有 X11 兜底，也没有后台守护进程。只有八个 Rust 可执行文件，和一个努力让自己“活着”的状态机。
+没有 Electron，没有浏览器内核，没有 X11 兜底，也没有后台守护进程。只有一个小型 Rust 可执行文件，和一个努力让自己“活着”的状态机。
+
+### 预先编译的 `pet`、TUI 与按需素材
+
+发行入口是统一的 **`pet`** 程序。程序包不包含角色美术，因此安装包很小：
+
+```bash
+pet tui                    # 选择、下载、设置并启停桌宠
+pet run kimi               # 首次使用时下载，后台启动后立即返回
+pet download kimi          # 下载并校验该角色的原始 WebP
+pet assets-dir             # 查看素材存储根目录
+pet assets-dir /mnt/pet    # 修改素材存储根目录
+pet stop kimi              # 停止该角色
+pet kimi                   # 启停切换
+pet kimi size 120          # 保存并热应用大小
+```
+
+用下面一条命令安装最新程序。脚本会自动识别 x86_64/aarch64、下载并校验 SHA-256、解压，然后执行同一个不需要 sudo 的用户级安装：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/linxuan-sys/linux-desktop-pet/main/scripts/install.sh | bash
+pet tui
+```
+
+如果需要手动校验和安装，也可以从 [程序 Release](../../releases/latest) 下载 `pet-0.1.0-x86_64.tar.gz` 或 `pet-0.1.0-aarch64.tar.gz`：
+
+```bash
+tar -xzf pet-0.1.0-x86_64.tar.gz
+cd pet-0.1.0-x86_64
+./install.sh
+pet tui
+```
+
+原始 WebP 从独立的 [`assets-v1`](../../releases/tag/assets-v1) Release 按需下载。下载器通过清单、压缩包和逐文件 SHA-256 校验，保存到 `<素材根目录>/pet/assets/<角色>/`，之后可离线复用。默认根目录是 `$XDG_DATA_HOME`（通常是 `~/.local/share`）；可用 `pet assets-dir 目录`，或在 TUI 中选择 **素材目录** 后按 Enter 修改。用 `pet assets-dir default` 或在 TUI 选择“自动管理”恢复默认。原有文件不会自动搬走，运行中的桌宠重启后使用新目录。需要播放的片段在后台线程中解码，在内存里无损裁剪，默认保留 32 MiB 热缓存；原始 WebP 字节和绿幕清理标记都保持不变。
+
+从源码仓库运行时，CLI 和 TUI 会优先直接使用仓库中已有的 `<仓库>/<角色>/media`，不会复制或重复下载这些原始 WebP。有效的 `--media-dir` 优先级最高，其次是仓库素材和已校验的受管缓存；只有没有本地素材的安装版 `pet` 才会按需下载。`pet download <角色>` 仍可显式下载或刷新素材。
+
+透明的单列 TUI 每秒刷新各角色的运行状态、CPU 和 RSS 内存，并显示总计。CPU 以整机总算力为 100%（例如 16 个逻辑核心中占满一个核心显示 6.25%）；RSS 总计可能重复计算共享页。Tab/Shift+Tab 勾选并向下/向上移动，Ctrl+A 全选筛选结果，Ctrl+D 清空勾选，`/` 搜索。Enter 为勾选伙伴打开明确的启动、停止和更新操作；未勾选时操作光标伙伴。按 `,` 进入设置，大小和缓存支持调整或输入，Enter 保存、Esc 取消；Alpha 放在高级设置中。统一的 **素材目录** 入口提供自动管理和目录预览，可选择仓库/素材库根目录、单角色 `media` 或空的下载目录。发现的仓库路径会被记住，从其他目录启动也可复用。单角色 CLI 配置为 `pet assets-dir kimi /path/to/kimi-girl/media`，`pet assets-dir default` 恢复自动管理。已有文件不复制、不删除。本地素材通过更新仓库或替换文件更新；已下载素材通过远端清单检查更新，更新前需停止对应伙伴。排查时仍可运行 `pet run <角色> --foreground`。
+
+运行中的角色会使用独立的 Linux 进程名，例如 `pet-claude`、`pet-dsh`、
+`pet-codex`；安装的可执行文件本身仍然叫 `pet`。
+
+### 每角色可选的磁盘分帧缓存
+
+```bash
+pet cache dsh              # 查看档位、目录与占用
+pet cache dsh common       # 生成常用 8 动作
+pet cache dsh all          # 生成全部动作
+pet cache dsh none         # 关闭并清理生成的分帧缓存
+```
+
+TUI 中选中伙伴后，进入 **设置 → 磁盘缓存**，选择 **不缓存 / 常用动作 / 全量缓存**。支持为每只角色分别设置，也支持批量选中；后台生成时显示进度，成功后保存并热应用。原来的 MiB 预算改称 **内存缓存**，两者独立。独立角色二进制可使用 `--disk-cache none|common|all`。
+
+分帧缓存放在 `$XDG_CACHE_HOME/pet/frames/<角色>/`，默认 `~/.cache/pet/frames/<角色>/`。播放时只读取并无损解压所需帧。常用动作包含待机、打字、听音乐、跳舞、走路、拖拽、开心、复制；其他动作仍走内存缓存。切回“常用动作”会清理其他生成帧，选择“不缓存”会清理生成文件，原始 WebP 不变。源素材变化后缓存失效，损坏帧自动重建；缓存读写失败会提示原因，该动作暂时走内存路径，改换档位或重启后可重新尝试。
+
+以当前素材计，DSH 常用 8 动作约 101 MiB，全量 101 动作约 1.29 GiB；八角色全量缓存约 12.72 GiB。首次生成仍需解码整张图，可能耗时几十秒并暂时占用较多内存；生成完成后播放才获得较低峰值。默认不启用磁盘缓存。
+
+下载的原始素材直接放在 `<素材根目录>/pet/assets/<角色>/`，默认 `~/.local/share/pet/assets/<角色>/`。素材和缓存目录均不带版本标签，版本及来源指纹只存在文件内部。旧的带版本号目录不读取、不兼容、不迁移、不复用，也不会删除。
+
+### 发布通道
+
+程序和素材使用两条分开的、不可变的 Release 通道：
+
+- `assets-vN` 保存原始 WebP 和清单。推送 `assets-*` 标签（或手动运行 **Release assets**）会把八只角色分别打包，上传到草稿 Release，校验 SHA-256，全部成功后才公开。
+- `vX.Y.Z` 由 **Build program-only releases** 构建。它会先确认 `resources/source.json` 引用的素材版本已经公开，然后只发布很小的 `pet` 程序包。
+
+素材更新时，先提交文件并发布新的 `assets-vN`；随后更新 `resources/source.json`、提升程序版本，再发布 `vX.Y.Z`。已经公开的旧素材 Release 不应覆盖。
 
 ### 为什么是 Rust，为什么是 Linux，为什么是 Wayland
 
@@ -512,7 +648,7 @@ The source code in this repository is released under the **MIT License** — see
 ### 环境要求
 
 - Linux + 支持 `zwlr_layer_shell_v1` 的 Wayland 合成器。**niri** 和 **Hyprland** 是已验证目标。不支持 X11。
-- Rust 1.88 或更新版本，八个 crate 都使用 edition 2024。
+- 预编译发行包不需要 Rust；从源码构建需要 Rust 1.88 或更新版本，因为角色 crate 使用 edition 2024。
 - `pkg-config`、`wayland`、`wayland-protocols` 开发文件。
 - 可选：可用的 D-Bus 会话总线，用于 MPRIS 音乐检测。
 - 可选：`wl-clipboard` 支持，用于剪贴板反应。
@@ -551,29 +687,20 @@ target/release/glm-girl
 target/release/kimi-girl
 ```
 
-### 生成素材缓存（必须，每套素材跑一次）
+### 准备动画素材（可选）
 
-渲染器读的是 `<pet>/media/optimized/` 里的裁剪图集，它由 `<pet>/media/anim/` 生成。这个目录**不进 git**，所以克隆后必须生成一次：
+原始素材保留在 `<pet>/media/anim/*.webp`，源码运行直接使用，不复制原图。
+`prepare` 校验原始素材；可选的磁盘分帧缓存由 `pet cache` 单独按需生成。
+
+`prepare` 继续作为一次性的下载与校验入口：
 
 ```bash
 pet prepare
-```
-
-这会按顺序处理全部八只。只处理一只：
-
-```bash
 pet kimi prepare
 ```
 
-不用启动脚本的话：
-
-```bash
-./target/release/kimi-girl --media-dir kimi-girl/media --prepare-assets
-```
-
-每只几分钟，八只合计输出大约 **10 GB**，因为是无损编码。这个过程是幂等的：已经是最新的素材会直接跳过，中途中断直接重跑即可。
-
-> 拉到新素材后必须重跑 `prepare`。裁剪图集必须和源图对应，否则渲染器会拒绝加载并报 `crop dimensions do not match metadata`。
+该命令检查原始 WebP 尺寸和 `ASSETS.json` 处理标记，不重写图片，也不创建
+`optimized/` 目录。安装版首次使用时只下载所选角色，之后复用已校验的本地副本。
 
 ### 运行
 
@@ -648,8 +775,8 @@ mkdir -p ~/.local/opt ~/.local/bin \
 ```text
 pet build                       编译全部桌宠
 pet <名字> build                只编译该桌宠
-pet prepare                     为全部桌宠生成素材缓存
-pet <名字> prepare              只生成该桌宠的素材缓存
+pet prepare                     下载并校验全部桌宠素材
+pet <名字> prepare              下载并校验该桌宠素材
 pet {claude|dsh|codex|grok|qwen|gemini|glm|kimi}   启停该桌宠
 pet <名字> size 50..150         设置大小百分比，运行中生效
 ```
@@ -707,15 +834,15 @@ systemctl --user enable --now kimi-girl.service
 八只桌宠共用一份配置：
 
 ```text
-$XDG_CONFIG_HOME/desktop-pet/desktop-pet.json
-# 通常是 ~/.config/desktop-pet/desktop-pet.json
+$XDG_CONFIG_HOME/pet/pet.json
+# 通常是 ~/.config/pet/pet.json
 ```
 
 这个文件**不会自动生成**。没有它时每只桌宠都跑内置默认值。仓库根目录带了一份可直接改的模板：
 
 ```bash
-mkdir -p ~/.config/desktop-pet
-cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
+mkdir -p ~/.config/pet
+cp pet.example.json ~/.config/pet/pet.json
 ```
 
 `pet <名字> size <百分比>` 在文件缺失时也会顺手创建它。
@@ -724,17 +851,20 @@ cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
 
 ```json
 {
+  "assets_root": null,
   "pets": {
     "claude-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty claude" }
     },
     "kimi-girl": {
       "scale": 1.0,
-      "cache_mib": 384,
+      "cache_mib": 32,
+      "disk_cache": "none",
       "output": null,
       "premultiply": true,
       "click": { "left": "", "middle": "kitty", "right": "kitty kimi" }
@@ -745,8 +875,10 @@ cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
 
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
+| `assets_root` | `null` | 全局素材数据根目录。`null` 使用 `$XDG_DATA_HOME`；字符串必须是绝对路径或以 `~/` 开头。 |
 | `scale` | `1.0` | 大小倍数，`0.5`–`1.5`。`1.0` 表示一个缓冲区像素对应一个画布像素，即不重采样。 |
-| `cache_mib` | `128` | 解码后图集的内存预算（MiB），`128`–`512`。一张图集约 25–70 MiB，384 大约能放十段。 |
+| `cache_mib` | `32` | 未使用磁盘缓存的动作所用的内存预算（MiB），`16`–`512`；单个动作可能暂时超出目标值。 |
+| `disk_cache` | `"none"` | 每角色独立的磁盘缓存：`none` 不缓存、`common` 常用 8 动作、`all` 全量。 |
 | `output` | `null` | 固定到某个输出，例如 `"DP-1"`。`null` 跟随合成器。 |
 | `premultiply` | `true` | 写入共享缓冲区前是否预乘 alpha。Wayland 的 `Argb8888` 本身就是预乘格式，所以 `true` 才是正确的。只有当素材抗锯齿边缘带有绿幕残留（预乘后会变成暗色雪花）时才设为 `false`。 |
 | `click.left` | `""` | 左键命令。留空表示不执行命令，但仍然会播开心反应。 |
@@ -772,7 +904,15 @@ cp desktop-pet.example.json ~/.config/desktop-pet/desktop-pet.json
 - **桌宠引擎。** 每个姿势锁定完整的 10 秒片段。拖拽、点击开心、复制剪贴板会立刻打断；充电要等当前片段播完。拖拽是唯一由“按住状态”驱动、而不是定时器的反应。
 - **模式。** 聚焦终端时跑固定 50 秒循环：发呆、发呆、写代码、发呆、听音乐。否则走七步清醒日程：发呆、发呆、随机、发呆、发呆、随机、走路。
 - **走路。** 奔跑窗口之前和之后窗口不动，窗口内插值移动，碰到屏幕边缘 clamp。
-- **渲染器。** `prepare_assets` 把 120 个格子逐个裁到 alpha 包围盒，再货架打包进一张图集，把 105 MiB 的整图压到约 35 MiB。运行时 `Sheet` 在专用线程解码，按字节预算淘汰，把当前帧直接写进共享内存缓冲区。帧是双缓冲的，用完通过 `wl_buffer.release` 归还。
+- **渲染器。** 统一程序保持原始 WebP 不变，在后台线程一次解码一个所需动作，把每帧裁到 alpha 边界，并保留有上限的无损热缓存；裁剪完成后即释放完整源图。
+
+压缩帧会收缩多余容量，缓存预算按实际分配容量统计。在使用 glibc 的 Linux 上，首次加载动作和缓存淘汰还会将分配器中的空闲页归还系统；逐帧命中缓存时不执行回收。`cache_mib` 限制的是保留的帧数据，并非进程 RSS 总上限：碎片化页面可能继续驻留，冷解码仍需要临时的 105 MiB 源图及解码器工作内存。
+
+可单独运行真实素材的内存回归检查（连续切换 16 个 DSH 动作，使用 16 MiB 缓存预算）：
+
+```bash
+cargo test -p desktop-pet real_clip_switches_keep_resident_memory_bounded -- --ignored --nocapture
+```
 
 ### 动画格式
 
@@ -809,9 +949,11 @@ Codex Girl 全程用短名字：`待机`、`开心`、`跳舞`、`写代码`、`
 
 ```text
 linux-desktop-pet/
-├── Cargo.toml                workspace：八个 crate，一份共享引擎
+├── Cargo.toml                workspace：八个角色 crate、`desktop-pet`、一份共享引擎
+├── desktop-pet/              统一 CLI 和 Rust TUI；可执行文件名为 `pet`
 ├── engine/                   所有桌宠共用
-│   ├── gfx.rs                图集裁剪/打包、解码线程、字节预算 LRU、位块传输
+│   ├── assets.rs             带版本下载、清单和 SHA-256 校验
+│   ├── gfx.rs                原始 WebP 解码、裁剪缓存和位块传输
 │   ├── runtime.rs            主循环、配置热重载、拖拽边沿、信号管道
 │   ├── settings.rs           配置解析、原子写入、位置持久化
 │   ├── host/
@@ -825,8 +967,7 @@ linux-desktop-pet/
 │   │   └── pet.rs            状态机（唯一与桌宠相关的逻辑）
 │   └── media/
 │       ├── anim/             源 WebP 精灵图（进 git）
-│       ├── ASSETS.json       可选标记："cleaned" / "raw"
-│       └── optimized/        生成的图集 + json（不进 git）
+│       └── ASSETS.json       可选标记："cleaned" / "raw"
 ├── dsh-girl/                101 段动画
 ├── codex-girl/               90 段动画
 ├── grok-girl/               101 段动画
@@ -836,20 +977,21 @@ linux-desktop-pet/
 ├── kimi-girl/               105 段动画
 ├── docs/
 │   ├── poster.png            八只桌宠的海报
-│   ├── demo.gif              演示动图
-│   └── make_poster.py        重新生成 poster.png
-├── pet                       启动脚本：编译/转码/启停/调大小
-├── desktop-pet.example.json  配置模板 —— 复制到 ~/.config/desktop-pet/
+│   └── demo.gif              演示动图
+├── resources/source.json     独立素材仓库和 Release 标签
+├── scripts/                  程序和素材打包、发布辅助脚本
+├── pet                       统一 `pet` 的源码目录包装脚本
+├── pet.example.json          配置模板 —— 复制到 ~/.config/pet/pet.json
 ├── LICENSE
 └── README.md
 ```
 
-加第九只桌宠意味着新建一个 crate（三个文件：`main.rs`、`character.rs`、`pet.rs`）、一个素材目录，以及在 `pet` 和 `Cargo.toml` 里各加两行。引擎不用改。
+加第九只桌宠意味着新建一个 crate（三个文件：`main.rs`、`character.rs`、`pet.rs`）、一个素材目录，以及在 `desktop-pet` 和 `Cargo.toml` 里登记。引擎不用改。
 
 ### 常见问题
 
-- **`No such file or directory ... media/optimized/xxx.json`** —— 裁剪图集缓存缺失，跑 `pet <名字> prepare`。
-- **`crop dimensions do not match metadata`** —— 图集是用另一套源素材生成的，重跑 `pet <名字> prepare`。
+- **`expected 5120x5400 source sheet`** —— 选中的文件不是完整的原始动画图，
+  用 `pet <名字> prepare` 恢复或重新下载。
 - **`animation <名字>: missing from library`** —— `EASTER_ACTIONS` 里的名字没有对应的 WebP。从池子里删掉，或者补上素材。
 - **`no media/anim directory`** —— 传 `--media-dir <pet>/media`，或者把 `media/` 装进 `~/.local/share/<pet>/media`。
 - **桌宠看不见 / 覆盖层没出现** —— 确认在 Wayland 下，且合成器支持 `zwlr_layer_shell_v1`。

@@ -4,24 +4,16 @@
 /// antialiased edges carry green-screen residue (that shows up as dark speckle
 /// once premultiplied). Override with `premultiply` in the config file.
 pub const DEFAULT_PREMULTIPLY: bool = true;
+pub fn selected() -> &'static str {
+    env!("CARGO_PKG_NAME")
+}
+pub fn select(_: &str) -> Result<&'static str, String> {
+    Ok(selected())
+}
 
-const IDLE_ANIM: &str = "待机";
-const HAPPY_ANIM: &str = "开心";
-
+#[path = "../../engine/poses.rs"]
+mod poses;
+pub use poses::animation_for;
 pub fn pose_anim(pose: &str) -> Option<&'static str> {
-    Some(match pose {
-        "idle" => IDLE_ANIM,
-        "happy" => HAPPY_ANIM,
-        "dance" => "跳舞",
-        "typing" => "写代码",
-        "music" => "听音乐",
-        "walk-left" | "walk-right" => "奔跑",
-        "copy" => "记录",
-        "charging" => "庆祝",
-        "low-battery" => "没电",
-        "late-night" | "drowsy" => "打哈欠",
-        "asleep" => "睡觉",
-        "dragged" => "被鼠标拖拽悬空反馈",
-        _ => return None,
-    })
+    animation_for(selected(), pose)
 }

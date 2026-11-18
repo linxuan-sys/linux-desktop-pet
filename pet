@@ -1,129 +1,30 @@
 #!/usr/bin/env bash
-# pet — start/stop the three Linux desktop pets.
+# Source-tree convenience wrapper. Installed packages expose the same `pet` command.
 set -u
 
 SCRIPT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -n "${PET_ROOT:-}" ]]; then
     ROOT="$PET_ROOT"
-elif [[ -f "$SCRIPT_ROOT/Cargo.toml" && -d "$SCRIPT_ROOT/engine" ]]; then
+elif [[ -f "$SCRIPT_ROOT/Cargo.toml" && -d "$SCRIPT_ROOT/desktop-pet" ]]; then
     ROOT="$SCRIPT_ROOT"
 else
     ROOT="$HOME/.local/opt/linux-desktop-pet"
 fi
-STATE="${XDG_STATE_HOME:-$HOME/.local/state}/pet"
 
-usage() {
-    echo "用法:"
-    echo "  pet build                       编译全部桌宠"
-    echo "  pet <名字> build                只编译该桌宠"
-    echo "  pet prepare                     为全部桌宠生成素材缓存"
-    echo "  pet {claude|codex|dsh|grok|qwen|gemini|glm|kimi}  启停该桌宠"
-    echo "  pet <名字> size 50..150         设置大小百分比，运行中生效"
-    echo "  pet <名字> prepare              只生成该桌宠的素材缓存"
-}
+target_root="${CARGO_TARGET_DIR:-$ROOT/target}"
+if [[ "$target_root" != /* ]]; then
+    target_root="$ROOT/$target_root"
+fi
+binary="$target_root/release/pet"
 
-ALL_PETS=(claude-girl codex-girl dsh-girl grok-girl qwen-girl gemini-girl glm-girl kimi-girl)
+if [[ "${1:-}" == "build" || "${2:-}" == "build" ]]; then
+    exec cargo build --release --manifest-path "$ROOT/Cargo.toml" -p desktop-pet
+fi
 
-case "${1:-}" in
-    build)
-        [[ $# -eq 1 ]] || { usage; exit 2; }
-        exec cargo build --release --manifest-path "$ROOT/Cargo.toml"
-        ;;
-    prepare)
-        [[ $# -eq 1 ]] || { usage; exit 2; }
-        bin="${CARGO_TARGET_DIR:-$ROOT/target}/release"
-        if [[ ! -x "$bin/claude-girl" ]]; then
-            echo "先编译: pet build" >&2
-            exit 1
-        fi
-        for n in "${ALL_PETS[@]}"; do
-            echo "=== $n ==="
-            "$bin/$n" --media-dir "$ROOT/$n/media" --prepare-assets || exit 1
-        done
-        exit 0
-        ;;
-    claude) name="claude-girl" ;;
-    codex)  name="codex-girl"  ;;
-    grok)   name="grok-girl"   ;;
-    gemini) name="gemini-girl" ;;
-    glm)    name="glm-girl"    ;;
-    kimi)   name="kimi-girl"   ;;
-    qwen)   name="qwen-girl"   ;;
-    dsh)    name="dsh-girl"    ;;
-    *) usage; exit 2 ;;
-esac
-
-# 默认让三只分开站（单位：逻辑像素），否则它们会叠在同一个右下角
-case "$name" in
-    claude-girl) slot_right=4   ;;
-    dsh-girl)    slot_right=304 ;;
-    codex-girl)  slot_right=604 ;;
-    grok-girl)   slot_right=904 ;;
-    qwen-girl)   slot_right=1204 ;;
-    gemini-girl) slot_right=1504 ;;
-    glm-girl)    slot_right=1804 ;;
-    kimi-girl)   slot_right=2104 ;;
-    *)           slot_right=4   ;;
-esac
-# 只跑一只时贴回右下角，多只同时在线才需要错开
-others=0
-for n in claude-girl dsh-girl codex-girl grok-girl qwen-girl gemini-girl glm-girl kimi-girl; do
-    [ "$n" = "$name" ] && continue
-    pgrep -x "$n" >/dev/null 2>&1 && others=$((others + 1))
-done
-[ "$others" -eq 0 ] && slot_right=4
-export PET_MARGIN_RIGHT="${PET_MARGIN_RIGHT:-$slot_right}"
-export PET_MARGIN_BOTTOM="${PET_MARGIN_BOTTOM:-20}"
-bin="${CARGO_TARGET_DIR:-$ROOT/target}/release/$name"
-if [[ ! -x "$bin" ]]; then
-    echo "找不到可执行文件: $bin" >&2
-    echo "先编译: cargo build --release --manifest-path \"$ROOT/Cargo.toml\"" >&2
+if [[ ! -x "$binary" ]]; then
+    echo "找不到统一程序：$binary" >&2
+    echo "先运行：pet build" >&2
     exit 1
 fi
-case "${2:-}" in
-    build)
-        [[ $# -eq 2 ]] || { usage; exit 2; }
-        exec cargo build --release --manifest-path "$ROOT/Cargo.toml" -p "$name"
-        ;;
-    size)
-        [[ $# -eq 3 ]] || { usage; exit 2; }
-        exec "$bin" --scale "$3"
-        ;;
-    prepare)
-        [[ $# -eq 2 ]] || { usage; exit 2; }
-        [[ -x "$bin" ]] || { echo "先编译: pet build" >&2; exit 1; }
-        exec "$bin" --media-dir "$ROOT/$name/media" --prepare-assets
-        ;;
-    "") [[ $# -eq 1 ]] || { usage; exit 2; } ;;
-    *) usage; exit 2 ;;
-esac
 
-if pgrep -x "$name" >/dev/null 2>&1; then
-    pkill -TERM -x "$name"
-    for _ in {1..20}; do
-        pgrep -x "$name" >/dev/null 2>&1 || break
-        sleep 0.1
-    done
-    if pgrep -x "$name" >/dev/null 2>&1; then
-        pkill -KILL -x "$name"
-    fi
-    if pgrep -x "$name" >/dev/null 2>&1; then
-        echo "$name 关闭失败" >&2
-        exit 1
-    fi
-    echo "$name 已关闭"
-    exit 0
-fi
-
-
-mkdir -p "$STATE"
-log="$STATE/$name.log"
-setsid -f "$bin" --media-dir "$ROOT/$name/media" >"$log" 2>&1 </dev/null
-sleep 0.3
-if pgrep -x "$name" >/dev/null 2>&1; then
-    echo "$name 已启动"
-else
-    echo "$name 启动失败，日志: $log" >&2
-    tail -n 10 "$log" >&2
-    exit 1
-fi
+exec "$binary" "$@"

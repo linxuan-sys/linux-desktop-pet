@@ -8,6 +8,10 @@ const CLIP_MS: u64 = 10_000;
 /// so the hop lasts 7.0s and never wraps past the 10s mark.
 pub const HAPPY_MS: u64 = 7_000;
 pub const HAPPY_SKIP_MS: u64 = 3_000;
+#[allow(dead_code)]
+pub const fn happy_skip_ms() -> u64 {
+    HAPPY_SKIP_MS
+}
 // Three 10s work clips, then one 10s music clip. 28s puts the first music
 // on the boundary after three clips; 38s = 10s music + three more clips.
 /// Terminal-focus cycle: two idle clips, typing, idle, music (50s total).
@@ -46,24 +50,97 @@ const STEPS: &[Step] = &[
 ];
 
 const EASTER_ACTIONS: &[&str] = &[
-    "三球抛接", "下五子棋", "东张西望", "中秋赏月吃月饼", "优雅提裙旋舞", "余额-分文不剩",
-    "余额-数金皱眉", "余额-袋空如洗", "余额-金袋叮当", "余额-钱袋如常", "余额-钱袋满溢", "偷吃零食被抓住",
-    "写福字", "凭空生花", "动物环绕", "原地专心玩魔方", "原地敲击桌面互动", "原地漂浮踏步",
-    "原地蹲下玩玩具汽车", "原地重力下蹲压缩", "变鸽子", "吃Token", "吃冰淇淋融化", "吃午餐",
-    "吃大闸蟹", "吃年糕", "吃早餐", "吃晚餐", "吃汤圆", "吃白饭",
-    "吃粽子", "吃糖葫芦", "吃腊八粥", "吃西瓜", "吃重阳糕", "吃长寿面",
-    "吃青团", "吃饺子", "吹气球", "吹笛子", "堆雪人", "大口吃零食",
-    "小幅度原地360度旋转展示", "小提琴演奏", "小金蝠现世", "小魔女吐泡泡特效", "工作状态-忙碌点按", "工作状态-思考冒泡",
-    "工作状态-清点归档", "扑克魔术", "抽陀螺", "拆礼物", "提裙屈膝礼仪", "插茱萸赏菊",
-    "摇扇纳凉", "撸猫", "收红包", "放孔明灯", "放河灯", "放烟花",
-    "放风筝", "整体换装试色", "是啊吃什么", "晨间刷牙", "涮火锅", "深度思考碎碎念",
-    "点击回应-傲娇生气", "点击回应-元气挥手", "点击回应-害羞惊讶", "点击回应-挠痒咯咯笑", "照镜子", "玩水枪",
-    "玩游戏气急败坏", "用金色双马尾拍打地面", "碎碎念-对屏碎碎念", "碎碎念-擦桌碎碎念", "穿针乞巧", "舞狮头",
-    "荡秋千", "萌化小幽灵", "蝴蝶蜜蜂环绕头顶开花", "螃蟹走路", "被吓一跳", "被落叶淹没",
-"装点圣诞树", "讨糖南瓜灯", "超大伸懒腰", "踢毽子", "轻快摇摆舞",
+    "三球抛接",
+    "下五子棋",
+    "东张西望",
+    "中秋赏月吃月饼",
+    "优雅提裙旋舞",
+    "余额-分文不剩",
+    "余额-数金皱眉",
+    "余额-袋空如洗",
+    "余额-金袋叮当",
+    "余额-钱袋如常",
+    "余额-钱袋满溢",
+    "偷吃零食被抓住",
+    "写福字",
+    "凭空生花",
+    "动物环绕",
+    "原地专心玩魔方",
+    "原地敲击桌面互动",
+    "原地漂浮踏步",
+    "原地蹲下玩玩具汽车",
+    "原地重力下蹲压缩",
+    "变鸽子",
+    "吃Token",
+    "吃冰淇淋融化",
+    "吃午餐",
+    "吃大闸蟹",
+    "吃年糕",
+    "吃早餐",
+    "吃晚餐",
+    "吃汤圆",
+    "吃白饭",
+    "吃粽子",
+    "吃糖葫芦",
+    "吃腊八粥",
+    "吃西瓜",
+    "吃重阳糕",
+    "吃长寿面",
+    "吃青团",
+    "吃饺子",
+    "吹气球",
+    "吹笛子",
+    "堆雪人",
+    "大口吃零食",
+    "小幅度原地360度旋转展示",
+    "小提琴演奏",
+    "小金蝠现世",
+    "小魔女吐泡泡特效",
+    "工作状态-忙碌点按",
+    "工作状态-思考冒泡",
+    "工作状态-清点归档",
+    "扑克魔术",
+    "抽陀螺",
+    "拆礼物",
+    "提裙屈膝礼仪",
+    "插茱萸赏菊",
+    "摇扇纳凉",
+    "撸猫",
+    "收红包",
+    "放孔明灯",
+    "放河灯",
+    "放烟花",
+    "放风筝",
+    "整体换装试色",
+    "是啊吃什么",
+    "晨间刷牙",
+    "涮火锅",
+    "深度思考碎碎念",
+    "点击回应-傲娇生气",
+    "点击回应-元气挥手",
+    "点击回应-害羞惊讶",
+    "点击回应-挠痒咯咯笑",
+    "照镜子",
+    "玩水枪",
+    "玩游戏气急败坏",
+    "用金色双马尾拍打地面",
+    "碎碎念-对屏碎碎念",
+    "碎碎念-擦桌碎碎念",
+    "穿针乞巧",
+    "舞狮头",
+    "荡秋千",
+    "萌化小幽灵",
+    "蝴蝶蜜蜂环绕头顶开花",
+    "螃蟹走路",
+    "被吓一跳",
+    "被落叶淹没",
+    "装点圣诞树",
+    "讨糖南瓜灯",
+    "超大伸懒腰",
+    "踢毽子",
+    "轻快摇摆舞",
     "骑木马",
 ];
-
 
 /// Clips that already mean a dedicated state/pose; the random pool must not
 /// steal them, or a random pick would collide with a real state.
@@ -100,9 +177,15 @@ fn roll_random() -> &'static str {
 const LAZY_START: u64 = u64::MAX;
 
 enum Reaction {
-    Happy { start: u64 },
-    Charging { start: u64 },
-    Copy { start: u64 },
+    Happy {
+        start: u64,
+    },
+    Charging {
+        start: u64,
+    },
+    Copy {
+        start: u64,
+    },
     /// Held while the pointer drags the window; cleared on release.
     Dragged,
 }
@@ -194,17 +277,14 @@ impl Pet {
         self.battery_pct = st.battery_pct;
         self.charging = st.is_charging;
 
-        // leaving awake aborts the walk; the schedule restarts at step 0
-        if st.mode != "awake" {
-            self.walk = None;
-        }
-
         // charging celebration is an edge (upstream wasCharging)
         if st.is_charging && !self.was_charging && self.reaction.is_none() {
             self.reaction = Some(Reaction::Charging { start: LAZY_START });
         }
         self.was_charging = st.is_charging;
 
+        // Mode changes select the next clip. An active walk keeps driving
+        // the window until its clip ends or an urgent interaction interrupts it.
         let new_mode = st.mode.as_str();
         if new_mode != self.last_state_mode {
             self.step_index = 0;
@@ -409,7 +489,11 @@ impl Pet {
         // after midnight she alternates yawning and sleeping, even while a
         // terminal is focused
         if self.hour < 6 {
-            return if self.current == Some("drowsy") { "asleep" } else { "drowsy" };
+            return if self.current == Some("drowsy") {
+                "asleep"
+            } else {
+                "drowsy"
+            };
         }
         match self.mode {
             Mode::Action => {

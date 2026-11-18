@@ -3,5 +3,9 @@ target/
 *.log
 .DS_Store
 .codegraph/
+__pycache__/
+*.py[cod]
 
 */media/optimized/
+
+dist/
