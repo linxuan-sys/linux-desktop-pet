@@ -847,7 +847,7 @@ fn draw(frame: &mut ratatui::Frame, app: &App) {
                 title,
                 app.theme.fg(GOLD).add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled("一位伙伴，一整个小宇宙。", app.theme.fg(BLUE))),
+            Line::from(Span::styled("八位小伙伴，一整个小宇宙。", app.theme.fg(BLUE))),
         ]),
         sections[0],
     );
