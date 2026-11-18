@@ -83,6 +83,7 @@ struct Job {
     pet: &'static str,
     finished: usize,
     errors: usize,
+    first_error: Option<String>,
     total: usize,
     detail: String,
 }
@@ -275,6 +276,7 @@ impl App {
             pet: first,
             finished: 0,
             errors: 0,
+            first_error: None,
             total,
             detail: "正在准备…".into(),
         });
@@ -303,7 +305,9 @@ impl App {
                             Ok(message) => self.notice = format!("{pet}：{message}"),
                             Err(error) => {
                                 job.errors += 1;
-                                self.notice = format!("{pet}：{error}");
+                                let message = format!("{pet}：{error}");
+                                job.first_error.get_or_insert_with(|| message.clone());
+                                self.notice = message;
                             }
                         }
                         changed = true;
@@ -333,10 +337,14 @@ impl App {
                 };
             }
             if job.finished == job.total {
-                self.notice = format!(
-                    "完成 {}/{}，失败 {}。{}",
-                    job.finished, job.total, job.errors, self.notice
-                );
+                let summary = format!("完成 {}/{}，失败 {}。", job.finished, job.total, job.errors);
+                self.notice = if let Some(error) = job.first_error.take() {
+                    format!("{summary}\n{error}")
+                } else if job.total == 1 {
+                    format!("{summary}{}", self.notice)
+                } else {
+                    summary
+                };
                 complete = true;
             } else if disconnected {
                 self.notice = "任务线程意外退出；已有素材保持不变。".into();
@@ -738,7 +746,7 @@ fn perform(
                 }
                 None => assets::download_with_progress_for(pet, progress)?,
             };
-            let result = control::start_for_media(pet, &media)?;
+            control::start_for_media(pet, &media)?;
             // Serialize expensive first-clip decoding; also detect a failed launch.
             for _ in 0..100 {
                 std::thread::sleep(Duration::from_millis(100));
@@ -746,7 +754,7 @@ fn perform(
                     return Err("启动后退出；请查看 ~/.local/state/pet 下的日志。".into());
                 }
                 if control::host_ready(pet) {
-                    return Ok(result);
+                    return Ok("已启动。".into());
                 }
             }
             Err("启动尚未就绪；请查看进程状态和日志后重试。".into())
@@ -847,7 +855,10 @@ fn draw(frame: &mut ratatui::Frame, app: &App) {
                 title,
                 app.theme.fg(GOLD).add_modifier(Modifier::BOLD),
             )),
-            Line::from(Span::styled("八位小伙伴，一整个小宇宙。", app.theme.fg(BLUE))),
+            Line::from(Span::styled(
+                "八位小伙伴，一整个小宇宙。",
+                app.theme.fg(BLUE),
+            )),
         ]),
         sections[0],
     );
@@ -858,7 +869,11 @@ fn draw(frame: &mut ratatui::Frame, app: &App) {
     } else {
         draw_menu(frame, sections[1], app);
     }
-    let mut notices = vec![Line::from(Span::styled(&app.notice, app.theme.fg(GREEN)))];
+    let mut notices: Vec<_> = app
+        .notice
+        .lines()
+        .map(|line| Line::from(Span::styled(line, app.theme.fg(GREEN))))
+        .collect();
     if let Some(job) = &app.job {
         notices.push(Line::from(Span::styled(
             format!(
@@ -1400,6 +1415,7 @@ mod tests {
             pet: character::PETS[0],
             finished: 0,
             errors: 0,
+            first_error: None,
             total: 2,
             detail: String::new(),
         });
