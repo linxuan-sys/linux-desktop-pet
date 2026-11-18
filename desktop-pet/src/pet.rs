@@ -154,3 +154,51 @@ behavior!(qwen);
 behavior!(gemini);
 behavior!(glm);
 behavior!(kimi);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sensor_updates_keep_movement_with_the_running_clip() {
+        fn check(mut pet: impl Behavior, name: &str, distance: i32, mode_during_walk: &str) {
+            let mut state = DerivedState {
+                mode: "asleep".into(),
+                spotify_playing: false,
+                hour: 12,
+                battery_pct: 100,
+                is_charging: true,
+            };
+            let mut x = 500;
+            for now in (0..=66_000).step_by(100) {
+                if now == 62_500 {
+                    state.mode = mode_during_walk.into();
+                }
+                if now % 2500 == 0 {
+                    pet.apply(&state);
+                }
+                pet.sync_pos(x, 100);
+                pet.set_max_x(1000);
+                let pose = pet.tick(now);
+                if now >= 60_000 {
+                    assert_eq!(pose, Some("walk-left"), "{name} at {now}");
+                }
+                if pet.walking() {
+                    x = pet.pos().0;
+                }
+            }
+            assert_eq!(x, 500 - distance, "{name} in {mode_during_walk}");
+        }
+
+        for mode in ["asleep", "action"] {
+            check(claude::Pet::new(), "claude", 120, mode);
+            check(dsh::Pet::new(), "dsh", 180, mode);
+            check(codex::Pet::new(), "codex", 150, mode);
+            check(grok::Pet::new(), "grok", 120, mode);
+            check(qwen::Pet::new(), "qwen", 120, mode);
+            check(gemini::Pet::new(), "gemini", 120, mode);
+            check(glm::Pet::new(), "glm", 150, mode);
+            check(kimi::Pet::new(), "kimi", 150, mode);
+        }
+    }
+}

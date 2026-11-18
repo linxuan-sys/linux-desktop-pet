@@ -277,17 +277,14 @@ impl Pet {
         self.battery_pct = st.battery_pct;
         self.charging = st.is_charging;
 
-        // leaving awake aborts the walk; the schedule restarts at step 0
-        if st.mode != "awake" {
-            self.walk = None;
-        }
-
         // charging celebration is an edge (upstream wasCharging)
         if st.is_charging && !self.was_charging && self.reaction.is_none() {
             self.reaction = Some(Reaction::Charging { start: LAZY_START });
         }
         self.was_charging = st.is_charging;
 
+        // Mode changes select the next clip. An active walk keeps driving
+        // the window until its clip ends or an urgent interaction interrupts it.
         let new_mode = st.mode.as_str();
         if new_mode != self.last_state_mode {
             self.step_index = 0;
